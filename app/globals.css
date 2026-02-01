@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-slate-950 text-slate-100;
+}
+
+.gradient-hero {
+  background: radial-gradient(circle at top, rgba(34, 211, 238, 0.2), transparent 55%), #0f172a;
+}
+
+.card {
+  @apply bg-slate-900/60 border border-slate-700 rounded-2xl shadow-xl;
+}
+
+.btn-primary {
+  @apply inline-flex items-center justify-center rounded-full bg-vault-accent text-slate-900 font-semibold px-5 py-2 hover:bg-cyan-300 transition;
+}
+
+.btn-secondary {
+  @apply inline-flex items-center justify-center rounded-full border border-slate-600 text-slate-100 px-4 py-2 hover:border-cyan-300 hover:text-cyan-200 transition;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  @apply bg-vault-accent;
+}
