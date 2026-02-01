@@ -49,7 +49,10 @@ export function EntitlementProvider({ children }: { children: React.ReactNode })
     refresh();
   }, []);
 
-  const consumeCredit = () => {
+  const consumeCredit = async () => {
+    if (!license || license.proActive) return;
+    
+    // Optimistically update UI
     setLicense((prev) => {
       if (!prev) return prev;
       if (prev.proActive) return prev;
@@ -58,6 +61,29 @@ export function EntitlementProvider({ children }: { children: React.ReactNode })
         exportCredits: Math.max(0, prev.exportCredits - 1)
       };
     });
+
+    // Sync with server
+    try {
+      const response = await fetch('/api/entitlement', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          email: license.email,
+          consumeCredit: true
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.license) {
+          localStorage.setItem("pdf-toolbox-license", data.license);
+          const payload = await verifyLicense(data.license, PUBLIC_KEY);
+          setLicense(payload);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to sync credit consumption:", error);
+    }
   };
 
   const value = useMemo(

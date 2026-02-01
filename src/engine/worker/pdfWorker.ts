@@ -1,4 +1,4 @@
-import { getDocument } from "pdfjs-dist/legacy/build/pdf";
+import { getDocument } from "pdfjs-dist";
 
 export type WorkerRect = { x: number; y: number; width: number; height: number };
 
@@ -28,7 +28,7 @@ self.onmessage = async (event: MessageEvent<RenderRequest>) => {
     const ctx = canvas.getContext("2d");
     if (!ctx) continue;
 
-    await page.render({ canvasContext: ctx, viewport }).promise;
+    await page.render({ canvasContext: ctx as any, viewport }).promise;
 
     const rects = redactions?.[i - 1] ?? [];
     if (rects.length) {
@@ -49,5 +49,5 @@ self.onmessage = async (event: MessageEvent<RenderRequest>) => {
 
   const message: RenderResponse = { type: "rendered", pages };
   const transfers = pages.map((page) => page.image);
-  self.postMessage(message, transfers);
+  self.postMessage(message, { transfer: transfers });
 };

@@ -1,8 +1,10 @@
 export type EntitlementRecord = {
   email: string;
+  customerId?: string;
   proActive: boolean;
   exportCredits: number;
   expiresAt: number | null;
+  subscriptionId?: string;
 };
 
 declare global {
@@ -21,4 +23,12 @@ export function getEntitlement(email: string) {
 
 export function setEntitlement(record: EntitlementRecord) {
   store.set(record.email.toLowerCase(), record);
+}
+
+export function getAllEntitlements() {
+  return Array.from(store.values());
+}
+
+export function deleteEntitlement(email: string) {
+  store.delete(email.toLowerCase());
 }

@@ -1,44 +1,42 @@
 import { SignJWT, jwtVerify } from "jose";
 
 export type LicensePayload = {
+  customerId: string;
+  email: string;
   proActive: boolean;
   exportCredits: number;
-  expiresAt: number | null;
-  email: string;
+  exp: number;
 };
 
-const ISSUER = "pdf-toolbox";
+const ISSUER = "pdf-vault";
+const AUDIENCE = "pdf-vault-app";
 
 export async function signLicense(payload: LicensePayload, privateKey: string) {
   const key = await importPrivateKey(privateKey);
-  return new SignJWT(payload)
-    .setProtectedHeader({ alg: "ES256" })
+  return new SignJWT({ ...payload })
+    .setProtectedHeader({ alg: "RS256" })
     .setIssuer(ISSUER)
+    .setAudience(AUDIENCE)
     .setIssuedAt()
-    .setExpirationTime(payload.expiresAt ? Math.floor(payload.expiresAt / 1000) : "30d")
+    .setExpirationTime(payload.exp)
     .sign(key);
 }
 
-export async function verifyLicense(token: string, publicKey: string) {
+export async function verifyLicense(token: string, publicKey: string): Promise<LicensePayload> {
   const key = await importPublicKey(publicKey);
-  const { payload } = await jwtVerify(token, key, { issuer: ISSUER });
-  return payload as LicensePayload;
+  const { payload } = await jwtVerify(token, key, { 
+    issuer: ISSUER,
+    audience: AUDIENCE
+  });
+  return payload as unknown as LicensePayload;
 }
 
 async function importPrivateKey(pem: string) {
-  return importPKCS8(pem, "ES256");
+  const { importPKCS8 } = await import("jose");
+  return importPKCS8(pem, "RS256");
 }
 
 async function importPublicKey(pem: string) {
-  return importSPKI(pem, "ES256");
-}
-
-async function importPKCS8(pem: string, alg: "ES256") {
-  const { importPKCS8 } = await import("jose");
-  return importPKCS8(pem, alg);
-}
-
-async function importSPKI(pem: string, alg: "ES256") {
   const { importSPKI } = await import("jose");
-  return importSPKI(pem, alg);
+  return importSPKI(pem, "RS256");
 }

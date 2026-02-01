@@ -37,11 +37,10 @@ async function renderInMainThread(
   dpi: number,
   redactions?: Record<number, { x: number; y: number; width: number; height: number }[]>
 ) {
-  const { getDocument, GlobalWorkerOptions } = await import("pdfjs-dist/legacy/build/pdf");
-  GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/legacy/build/pdf.worker.min.mjs",
-    import.meta.url
-  ).toString();
+  const { getDocument, GlobalWorkerOptions } = await import("pdfjs-dist");
+  if (typeof window !== 'undefined') {
+    GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs`;
+  }
 
   const doc = await getDocument({ data }).promise;
   const pages: RenderResponse["pages"] = [];
