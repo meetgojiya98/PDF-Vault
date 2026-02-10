@@ -300,6 +300,105 @@ export async function reversePagesPdf(file: File) {
   return output.save();
 }
 
+export async function reorderPagesPdf(file: File, orderSpec: string) {
+  const bytes = await file.arrayBuffer();
+  const source = await PDFDocument.load(bytes);
+  const orderedIndexes = parsePageOrder(orderSpec, source.getPageCount());
+  const output = await PDFDocument.create();
+  const copied = await output.copyPages(source, orderedIndexes);
+  copied.forEach((page) => output.addPage(page));
+  return output.save();
+}
+
+export async function duplicatePagesPdf(file: File, ranges: PageRange[], repeatCount: number) {
+  const bytes = await file.arrayBuffer();
+  const source = await PDFDocument.load(bytes);
+  const repeats = clamp(Math.floor(repeatCount), 1, 10);
+  const selected = new Set(resolvePageIndexes(source, ranges));
+  const expandedOrder: number[] = [];
+
+  source.getPageIndices().forEach((pageIndex) => {
+    expandedOrder.push(pageIndex);
+    if (!selected.has(pageIndex)) return;
+    for (let count = 0; count < repeats; count += 1) {
+      expandedOrder.push(pageIndex);
+    }
+  });
+
+  const output = await PDFDocument.create();
+  const copied = await output.copyPages(source, expandedOrder);
+  copied.forEach((page) => output.addPage(page));
+  return output.save();
+}
+
+export async function interleavePdfs(files: File[]) {
+  if (files.length < 2) {
+    throw new Error("Select at least two PDFs to interleave.");
+  }
+  const docs = await Promise.all(files.map(async (file) => PDFDocument.load(await file.arrayBuffer())));
+  const output = await PDFDocument.create();
+  const maxPages = Math.max(...docs.map((doc) => doc.getPageCount()));
+
+  for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+    for (const doc of docs) {
+      if (pageIndex >= doc.getPageCount()) continue;
+      const copied = await output.copyPages(doc, [pageIndex]);
+      copied.forEach((page) => output.addPage(page));
+    }
+  }
+
+  return output.save();
+}
+
+export type MarginOptions = {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+  ranges?: PageRange[];
+};
+
+export async function addMarginsPdf(file: File, options: MarginOptions) {
+  const bytes = await file.arrayBuffer();
+  const pdf = await PDFDocument.load(bytes);
+  const pageIndexes = resolvePageIndexes(pdf, options.ranges);
+
+  pageIndexes.forEach((pageIndex) => {
+    const page = pdf.getPage(pageIndex);
+    const media = page.getMediaBox();
+    const width = media.width;
+    const height = media.height;
+    const left = clamp(options.left, 0, width * 0.5);
+    const right = clamp(options.right, 0, width * 0.5);
+    const top = clamp(options.top, 0, height * 0.5);
+    const bottom = clamp(options.bottom, 0, height * 0.5);
+    const newWidth = width + left + right;
+    const newHeight = height + top + bottom;
+
+    page.setMediaBox(0, 0, newWidth, newHeight);
+    page.setCropBox(0, 0, newWidth, newHeight);
+
+    const unsafePage = page as unknown as {
+      translateContent?: (x: number, y: number) => void;
+      translateAnnotations?: (x: number, y: number) => void;
+    };
+    unsafePage.translateContent?.(left, bottom);
+    unsafePage.translateAnnotations?.(left, bottom);
+  });
+
+  return pdf.save();
+}
+
+export async function grayscalePdf(file: File, dpi: number, quality: number) {
+  const data = await file.arrayBuffer();
+  const rendered = await renderPdfPages(data, dpi, undefined, {
+    imageFormat: "jpeg",
+    imageQuality: clamp(quality, 0.35, 0.95),
+    grayscale: true
+  });
+  return rebuildFromImages(rendered, "jpeg");
+}
+
 export async function stampSignature(
   file: File,
   signatureDataUrl: string,
@@ -404,6 +503,51 @@ export function resolvePageIndexes(source: PDFDocument, ranges?: PageRange[]) {
     .flatMap((range) => source.getPageIndices().filter((index) => index >= range.start && index <= range.end))
     .filter((value, index, all) => all.indexOf(value) === index)
     .sort((a, b) => a - b);
+}
+
+export function parsePageOrder(input: string, pageCount: number) {
+  const segments = input
+    .split(",")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (!segments.length) {
+    throw new Error("Enter at least one page in page order.");
+  }
+
+  const indexes: number[] = [];
+  for (const segment of segments) {
+    const parts = segment.split("-").map((part) => part.trim());
+    if (parts.length > 2) {
+      throw new Error(`Invalid page order segment "${segment}".`);
+    }
+    const start = Number.parseInt(parts[0], 10);
+    if (!Number.isInteger(start) || start < 1 || start > pageCount) {
+      throw new Error(`Page "${parts[0]}" is out of range (1-${pageCount}).`);
+    }
+
+    if (parts.length === 1 || !parts[1]) {
+      indexes.push(start - 1);
+      continue;
+    }
+
+    const end = Number.parseInt(parts[1], 10);
+    if (!Number.isInteger(end) || end < 1 || end > pageCount) {
+      throw new Error(`Page "${parts[1]}" is out of range (1-${pageCount}).`);
+    }
+
+    if (start <= end) {
+      for (let current = start; current <= end; current += 1) {
+        indexes.push(current - 1);
+      }
+    } else {
+      for (let current = start; current >= end; current -= 1) {
+        indexes.push(current - 1);
+      }
+    }
+  }
+
+  return indexes;
 }
 
 function smallestBySize(candidates: Uint8Array[]) {

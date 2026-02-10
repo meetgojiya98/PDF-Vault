@@ -24,13 +24,18 @@ import {
   type ToolSlug
 } from "../../../src/storage/indexedDb";
 import {
+  addMarginsPdf,
   addPageNumbers,
   compressPdf,
   cropPdf,
   deletePagesPdf,
+  duplicatePagesPdf,
+  grayscalePdf,
+  interleavePdfs,
   mergePdfs,
   parsePageRanges,
   redactPdf,
+  reorderPagesPdf,
   reversePagesPdf,
   rotatePdf,
   splitPdf,
@@ -68,6 +73,9 @@ function ToolWorkbench() {
   const [splitMode, setSplitMode] = useState<SplitMode>("single-file");
   const [rotateDegrees, setRotateDegrees] = useState<90 | 180 | 270>(90);
   const [rotateRanges, setRotateRanges] = useState("");
+  const [reorderSpec, setReorderSpec] = useState("");
+  const [duplicateRanges, setDuplicateRanges] = useState("1");
+  const [duplicateCount, setDuplicateCount] = useState(1);
 
   const [signature, setSignature] = useState<string | null>(null);
   const [placement, setPlacement] = useState<Rect>(DEFAULT_SIGNATURE_PLACEMENT);
@@ -104,8 +112,16 @@ function ToolWorkbench() {
   const [cropLeft, setCropLeft] = useState(20);
   const [cropRanges, setCropRanges] = useState("");
 
+  const [marginTop, setMarginTop] = useState(24);
+  const [marginRight, setMarginRight] = useState(24);
+  const [marginBottom, setMarginBottom] = useState(24);
+  const [marginLeft, setMarginLeft] = useState(24);
+  const [marginRanges, setMarginRanges] = useState("");
+
   const [deleteMode, setDeleteMode] = useState<DeleteMode>("ranges");
   const [deleteRanges, setDeleteRanges] = useState("1");
+
+  const [grayscaleQuality, setGrayscaleQuality] = useState(0.68);
 
   const [outputPrefix, setOutputPrefix] = useState("pdf-vault");
   const [output, setOutput] = useState<ExportInfo | null>(null);
@@ -257,6 +273,14 @@ function ToolWorkbench() {
       return [toOutputFile(data, buildName("merged"))];
     }
 
+    if (tool === "interleave") {
+      if (files.length < 2) {
+        throw new Error("Interleave requires at least two PDFs.");
+      }
+      const data = await interleavePdfs(files);
+      return [toOutputFile(data, buildName("interleaved"))];
+    }
+
     if (tool === "split") {
       if (!primaryFile) throw new Error("Upload a PDF to split.");
       const parsed = parsePageRanges(ranges);
@@ -271,6 +295,22 @@ function ToolWorkbench() {
       const rotateParsed = rotateRanges.trim() ? parsePageRanges(rotateRanges) : undefined;
       const data = await rotatePdf(primaryFile, rotateDegrees, rotateParsed);
       return [toOutputFile(data, buildName("rotated"))];
+    }
+
+    if (tool === "reorder") {
+      if (!primaryFile) throw new Error("Upload a PDF to reorder.");
+      if (!reorderSpec.trim()) {
+        throw new Error("Enter page order (e.g., 3,1-2,5).");
+      }
+      const data = await reorderPagesPdf(primaryFile, reorderSpec);
+      return [toOutputFile(data, buildName("reordered"))];
+    }
+
+    if (tool === "duplicate") {
+      if (!primaryFile) throw new Error("Upload a PDF to duplicate pages.");
+      const parsed = parsePageRanges(duplicateRanges);
+      const data = await duplicatePagesPdf(primaryFile, parsed, duplicateCount);
+      return [toOutputFile(data, buildName("duplicated"))];
     }
 
     if (tool === "reverse") {
@@ -322,6 +362,12 @@ function ToolWorkbench() {
       return [toOutputFile(data, buildName("compressed"))];
     }
 
+    if (tool === "grayscale") {
+      if (!primaryFile) throw new Error("Upload a PDF to convert to grayscale.");
+      const data = await grayscalePdf(primaryFile, dpi, grayscaleQuality);
+      return [toOutputFile(data, buildName("grayscale"))];
+    }
+
     if (tool === "crop") {
       if (!primaryFile) throw new Error("Upload a PDF to crop.");
       const data = await cropPdf(primaryFile, {
@@ -332,6 +378,18 @@ function ToolWorkbench() {
         ranges: getOptionalRanges(cropRanges)
       });
       return [toOutputFile(data, buildName("cropped"))];
+    }
+
+    if (tool === "margin") {
+      if (!primaryFile) throw new Error("Upload a PDF to add margins.");
+      const data = await addMarginsPdf(primaryFile, {
+        top: marginTop,
+        right: marginRight,
+        bottom: marginBottom,
+        left: marginLeft,
+        ranges: getOptionalRanges(marginRanges)
+      });
+      return [toOutputFile(data, buildName("margins"))];
     }
 
     if (tool === "watermark") {
@@ -394,6 +452,9 @@ function ToolWorkbench() {
     ranges,
     rotateDegrees,
     rotateRanges,
+    reorderSpec,
+    duplicateRanges,
+    duplicateCount,
     selectedPage,
     signature,
     splitMode,
@@ -407,6 +468,11 @@ function ToolWorkbench() {
     cropBottom,
     cropLeft,
     cropRanges,
+    marginTop,
+    marginRight,
+    marginBottom,
+    marginLeft,
+    marginRanges,
     watermarkText,
     watermarkOpacity,
     watermarkAngle,
@@ -420,6 +486,7 @@ function ToolWorkbench() {
     numberSize,
     numberOpacity,
     numberRanges,
+    grayscaleQuality,
     metaTitle,
     metaAuthor,
     metaSubject,
@@ -547,7 +614,7 @@ function ToolWorkbench() {
 
         <section className="grid gap-5 xl:grid-cols-[1fr_1.35fr]">
           <div className="space-y-5">
-            <FileDropzone multiple={tool === "merge"} onFiles={handleFiles} />
+            <FileDropzone multiple={tool === "merge" || tool === "interleave"} onFiles={handleFiles} />
 
             <section className="rounded-3xl border border-white/15 bg-white/[0.03] p-5">
               <div className="mb-4 flex items-center justify-between">
@@ -630,6 +697,41 @@ function ToolWorkbench() {
                   </>
                 )}
 
+                {tool === "reorder" && (
+                  <OptionInput
+                    label="Page Order"
+                    value={reorderSpec}
+                    onChange={setReorderSpec}
+                    placeholder="3,1-2,5-4"
+                    hint="Supports descending ranges. Example: 10-1 reverses first 10 pages."
+                  />
+                )}
+
+                {tool === "duplicate" && (
+                  <>
+                    <OptionInput
+                      label="Pages to duplicate"
+                      value={duplicateRanges}
+                      onChange={setDuplicateRanges}
+                      placeholder="2,4-6"
+                      hint="Selected pages are duplicated inline after each original."
+                    />
+                    <RangeControl
+                      label={`Duplicate count ${duplicateCount}`}
+                      min={1}
+                      max={10}
+                      value={duplicateCount}
+                      onChange={setDuplicateCount}
+                    />
+                  </>
+                )}
+
+                {tool === "interleave" && (
+                  <div className="rounded-2xl border border-violet-300/30 bg-violet-300/10 p-3 text-xs text-violet-100">
+                    Pages are alternated by file order (A1, B1, C1, A2...). Reorder files below to control sequence.
+                  </div>
+                )}
+
                 {tool === "reverse" && (
                   <div className="rounded-2xl border border-indigo-300/30 bg-indigo-300/10 p-3 text-xs text-indigo-100">
                     Reverses the full page order from last page to first page.
@@ -672,7 +774,7 @@ function ToolWorkbench() {
                   </>
                 )}
 
-                {(tool === "redact" || tool === "compress") && (
+                {(tool === "redact" || tool === "compress" || tool === "grayscale") && (
                   <div>
                     <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
                       <span>Render DPI</span>
@@ -694,6 +796,16 @@ function ToolWorkbench() {
                       Lower values reduce size more; higher values preserve more detail.
                     </p>
                   </div>
+                )}
+
+                {tool === "grayscale" && (
+                  <RangeControl
+                    label={`JPEG Quality ${(grayscaleQuality * 100).toFixed(0)}%`}
+                    min={35}
+                    max={95}
+                    value={Math.round(grayscaleQuality * 100)}
+                    onChange={(value) => setGrayscaleQuality(value / 100)}
+                  />
                 )}
 
                 {tool === "crop" && (
@@ -734,6 +846,47 @@ function ToolWorkbench() {
                       onChange={setCropRanges}
                       placeholder="Leave empty for all pages"
                       hint="Example: 2-10"
+                    />
+                  </>
+                )}
+
+                {tool === "margin" && (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <RangeControl
+                        label={`Top ${marginTop}px`}
+                        min={0}
+                        max={260}
+                        value={marginTop}
+                        onChange={setMarginTop}
+                      />
+                      <RangeControl
+                        label={`Right ${marginRight}px`}
+                        min={0}
+                        max={260}
+                        value={marginRight}
+                        onChange={setMarginRight}
+                      />
+                      <RangeControl
+                        label={`Bottom ${marginBottom}px`}
+                        min={0}
+                        max={260}
+                        value={marginBottom}
+                        onChange={setMarginBottom}
+                      />
+                      <RangeControl
+                        label={`Left ${marginLeft}px`}
+                        min={0}
+                        max={260}
+                        value={marginLeft}
+                        onChange={setMarginLeft}
+                      />
+                    </div>
+                    <OptionInput
+                      label="Apply to ranges (optional)"
+                      value={marginRanges}
+                      onChange={setMarginRanges}
+                      placeholder="Leave empty for all pages"
                     />
                   </>
                 )}
@@ -886,9 +1039,11 @@ function ToolWorkbench() {
               </div>
             </section>
 
-            {tool === "merge" && files.length > 0 && (
+            {(tool === "merge" || tool === "interleave") && files.length > 0 && (
               <section className="rounded-3xl border border-white/15 bg-white/[0.03] p-5">
-                <h2 className="mb-3 text-lg font-bold text-white">File Order</h2>
+                <h2 className="mb-3 text-lg font-bold text-white">
+                  {tool === "interleave" ? "Interleave File Order" : "File Order"}
+                </h2>
                 <div className="space-y-2">
                   {files.map((file, index) => (
                     <div key={`${file.name}-${index}`} className="flex items-center justify-between rounded-xl border border-white/10 bg-slate-900/35 px-3 py-2">
@@ -963,6 +1118,9 @@ function ToolWorkbench() {
               setPlacement(DEFAULT_SIGNATURE_PLACEMENT);
               setRotateDegrees(90);
               setRotateRanges("");
+              setReorderSpec("");
+              setDuplicateRanges("1");
+              setDuplicateCount(1);
               setDeleteMode("ranges");
               setDeleteRanges("1");
               setCropTop(20);
@@ -970,6 +1128,12 @@ function ToolWorkbench() {
               setCropBottom(20);
               setCropLeft(20);
               setCropRanges("");
+              setMarginTop(24);
+              setMarginRight(24);
+              setMarginBottom(24);
+              setMarginLeft(24);
+              setMarginRanges("");
+              setGrayscaleQuality(0.68);
               setWatermarkText("CONFIDENTIAL");
               setWatermarkOpacity(0.16);
               setWatermarkAngle(-35);

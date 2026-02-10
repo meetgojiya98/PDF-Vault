@@ -10,6 +10,7 @@ export type RenderRequest = {
   redactions?: Record<number, WorkerRect[]>;
   imageFormat?: RenderImageFormat;
   imageQuality?: number;
+  grayscale?: boolean;
 };
 
 export type RenderResponse =
@@ -25,7 +26,14 @@ export type RenderResponse =
 self.onmessage = async (event: MessageEvent<RenderRequest>) => {
   if (event.data.type !== "render") return;
   try {
-    const { data, dpi, redactions, imageFormat = "png", imageQuality = 0.72 } = event.data;
+    const {
+      data,
+      dpi,
+      redactions,
+      imageFormat = "png",
+      imageQuality = 0.72,
+      grayscale = false
+    } = event.data;
     const doc = await getDocument({ data, disableWorker: true } as any).promise;
     const pages: Extract<RenderResponse, { type: "rendered" }>["pages"] = [];
 
@@ -49,6 +57,18 @@ self.onmessage = async (event: MessageEvent<RenderRequest>) => {
           const height = rect.height * (dpi / 72);
           ctx.fillRect(x, y, width, height);
         });
+      }
+
+      if (grayscale) {
+        const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const raw = pixels.data;
+        for (let index = 0; index < raw.length; index += 4) {
+          const luma = Math.round(raw[index] * 0.299 + raw[index + 1] * 0.587 + raw[index + 2] * 0.114);
+          raw[index] = luma;
+          raw[index + 1] = luma;
+          raw[index + 2] = luma;
+        }
+        ctx.putImageData(pixels, 0, 0);
       }
 
       const blob = await canvas.convertToBlob({

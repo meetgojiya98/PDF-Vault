@@ -193,6 +193,76 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     keywords: ["reverse", "reorder", "flip", "sequence"],
     outputs: ["reversed PDF"],
     idealFor: ["Back scans", "Print corrections", "Legacy docs"]
+  },
+  {
+    slug: "reorder",
+    name: "Reorder Pages",
+    shortDescription: "Rebuild document with custom page order.",
+    longDescription: "Define explicit page order using ranges and page numbers to build a custom sequence.",
+    icon: "🔀",
+    category: "organize",
+    color: "from-cyan-500/20 to-sky-500/20",
+    borderColor: "border-cyan-400/35",
+    gradient: "from-cyan-300 to-sky-300",
+    keywords: ["sequence", "custom order", "arrange"],
+    outputs: ["reordered PDF"],
+    idealFor: ["Manual packets", "Exam papers", "Board decks"]
+  },
+  {
+    slug: "duplicate",
+    name: "Duplicate Pages",
+    shortDescription: "Repeat selected pages multiple times.",
+    longDescription: "Duplicate target page ranges inline with configurable repeat count for print runs and inserts.",
+    icon: "➕",
+    category: "organize",
+    color: "from-emerald-500/20 to-green-500/20",
+    borderColor: "border-emerald-400/35",
+    gradient: "from-emerald-300 to-green-300",
+    keywords: ["repeat", "clone", "copies"],
+    outputs: ["duplicated PDF"],
+    idealFor: ["Insert pages", "Print copies", "Booklet prep"]
+  },
+  {
+    slug: "interleave",
+    name: "Interleave PDFs",
+    shortDescription: "Alternate pages from multiple PDFs.",
+    longDescription: "Merge two or more PDFs by alternating pages in sequence (A1, B1, A2, B2...).",
+    icon: "🪢",
+    category: "organize",
+    color: "from-violet-500/20 to-indigo-500/20",
+    borderColor: "border-violet-400/35",
+    gradient: "from-violet-300 to-indigo-300",
+    keywords: ["alternate", "a/b merge", "collate"],
+    outputs: ["interleaved PDF"],
+    idealFor: ["Scanned duplex docs", "Appendix alternation", "Print collation"]
+  },
+  {
+    slug: "margin",
+    name: "Add Margins",
+    shortDescription: "Expand page canvas with custom margins.",
+    longDescription: "Add white space around pages with top/right/bottom/left controls on all or selected ranges.",
+    icon: "🧩",
+    category: "organize",
+    color: "from-amber-500/20 to-lime-500/20",
+    borderColor: "border-amber-400/35",
+    gradient: "from-amber-300 to-lime-300",
+    keywords: ["padding", "whitespace", "print margin"],
+    outputs: ["margin-adjusted PDF"],
+    idealFor: ["Print-safe docs", "Binding margins", "Layout cleanup"]
+  },
+  {
+    slug: "grayscale",
+    name: "Grayscale",
+    shortDescription: "Convert pages to grayscale output.",
+    longDescription: "Render PDF pages in grayscale with quality controls for archive-friendly monochrome versions.",
+    icon: "⚫",
+    category: "delivery",
+    color: "from-slate-500/20 to-zinc-500/20",
+    borderColor: "border-slate-400/35",
+    gradient: "from-slate-300 to-zinc-300",
+    keywords: ["black and white", "mono", "archive"],
+    outputs: ["grayscale PDF"],
+    idealFor: ["Archiving", "Low-ink prints", "Monochrome exports"]
   }
 ];
 
@@ -238,6 +308,20 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     description: "Remove unwanted pages and reverse order for corrected scan packets.",
     steps: ["delete", "reverse"],
     badge: "Ops"
+  },
+  {
+    id: "print-pack",
+    name: "Print Pack",
+    description: "Reorder pages, add margins, then duplicate target pages for print inserts.",
+    steps: ["reorder", "margin", "duplicate"],
+    badge: "Print"
+  },
+  {
+    id: "archive-mono",
+    name: "Archive Mono",
+    description: "Interleave scanned files then create grayscale archive output.",
+    steps: ["interleave", "grayscale", "compress"],
+    badge: "Archive"
   }
 ];
 

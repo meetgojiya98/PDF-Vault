@@ -29,7 +29,7 @@ export default function LandingPage() {
               with zero uploads.
             </h1>
             <p className="max-w-2xl text-lg text-slate-200/85">
-              Merge, split, crop, delete, reverse, number, watermark, sign, redact, and compress documents locally in your browser.
+              Merge, split, reorder, duplicate, interleave, add margins, grayscale, crop, delete, reverse, number, watermark, sign, redact, and compress documents locally in your browser.
               Build faster handoffs with workflow templates, pinned tools, and local run history.
             </p>
             <div className="flex flex-wrap gap-3">

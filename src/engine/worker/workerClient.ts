@@ -23,6 +23,7 @@ export async function renderPdfPages(
   options?: {
     imageFormat?: RenderImageFormat;
     imageQuality?: number;
+    grayscale?: boolean;
   }
 ): Promise<RenderedPages> {
   const canUseWorker = typeof Worker !== "undefined" && typeof OffscreenCanvas !== "undefined";
@@ -45,6 +46,7 @@ async function renderInWorker(
   options?: {
     imageFormat?: RenderImageFormat;
     imageQuality?: number;
+    grayscale?: boolean;
   }
 ) {
   const instance = getWorker();
@@ -54,7 +56,8 @@ async function renderInWorker(
     dpi,
     redactions,
     imageFormat: options?.imageFormat,
-    imageQuality: options?.imageQuality
+    imageQuality: options?.imageQuality,
+    grayscale: options?.grayscale
   };
 
   return new Promise<RenderedPages>((resolve, reject) => {
@@ -99,6 +102,7 @@ async function renderInMainThread(
   options?: {
     imageFormat?: RenderImageFormat;
     imageQuality?: number;
+    grayscale?: boolean;
   }
 ) {
   const { getDocument } = await import("pdfjs-dist");
@@ -106,6 +110,7 @@ async function renderInMainThread(
   const pages: RenderedPages = [];
   const imageFormat = options?.imageFormat ?? "png";
   const imageQuality = options?.imageQuality ?? 0.72;
+  const grayscale = options?.grayscale ?? false;
 
   for (let i = 1; i <= doc.numPages; i += 1) {
     const page = await doc.getPage(i);
@@ -129,6 +134,18 @@ async function renderInMainThread(
         const height = rect.height * scale;
         ctx.fillRect(x, y, width, height);
       });
+    }
+
+    if (grayscale) {
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const raw = pixels.data;
+      for (let index = 0; index < raw.length; index += 4) {
+        const luma = Math.round(raw[index] * 0.299 + raw[index + 1] * 0.587 + raw[index + 2] * 0.114);
+        raw[index] = luma;
+        raw[index + 1] = luma;
+        raw[index + 2] = luma;
+      }
+      ctx.putImageData(pixels, 0, 0);
     }
 
     const blob = await new Promise<Blob | null>((resolve) => {
