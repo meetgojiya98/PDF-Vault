@@ -20,7 +20,12 @@ export type ToolSlug =
   | "redact"
   | "compress"
   | "rotate"
-  | "watermark";
+  | "watermark"
+  | "number"
+  | "metadata"
+  | "crop"
+  | "delete"
+  | "reverse";
 
 export type RunHistoryItem = {
   id: string;
@@ -190,7 +195,12 @@ function dedupeTools(tools: ToolSlug[]) {
     "redact",
     "compress",
     "rotate",
-    "watermark"
+    "watermark",
+    "number",
+    "metadata",
+    "crop",
+    "delete",
+    "reverse"
   ]);
   const seen = new Set<ToolSlug>();
   const output: ToolSlug[] = [];

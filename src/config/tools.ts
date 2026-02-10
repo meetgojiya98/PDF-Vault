@@ -123,6 +123,76 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     keywords: ["confidential", "draft", "brand", "overlay"],
     outputs: ["watermarked PDF"],
     idealFor: ["Internal reviews", "Draft circulation", "Brand control"]
+  },
+  {
+    slug: "number",
+    name: "Page Numbers",
+    shortDescription: "Add customizable page numbering.",
+    longDescription: "Apply styled page numbers with prefix, start index, position, and opacity controls.",
+    icon: "#",
+    category: "review",
+    color: "from-lime-500/20 to-emerald-500/20",
+    borderColor: "border-lime-400/35",
+    gradient: "from-lime-300 to-emerald-300",
+    keywords: ["pagination", "index", "footer", "header"],
+    outputs: ["numbered PDF"],
+    idealFor: ["Reports", "Contracts", "Booklets"]
+  },
+  {
+    slug: "metadata",
+    name: "Metadata Editor",
+    shortDescription: "Edit title, author, and document metadata.",
+    longDescription: "Set professional metadata fields for searchability, archiving, and compliance workflows.",
+    icon: "🧾",
+    category: "review",
+    color: "from-teal-500/20 to-cyan-500/20",
+    borderColor: "border-teal-400/35",
+    gradient: "from-teal-300 to-cyan-300",
+    keywords: ["title", "author", "keywords", "properties"],
+    outputs: ["metadata-updated PDF"],
+    idealFor: ["Records teams", "Compliance archives", "Publishing"]
+  },
+  {
+    slug: "crop",
+    name: "Crop Pages",
+    shortDescription: "Crop margins with precise controls.",
+    longDescription: "Trim page margins from selected ranges to improve print fit and readability.",
+    icon: "🗜",
+    category: "organize",
+    color: "from-amber-500/20 to-yellow-500/20",
+    borderColor: "border-amber-400/35",
+    gradient: "from-amber-300 to-yellow-300",
+    keywords: ["trim", "margins", "layout", "print"],
+    outputs: ["cropped PDF"],
+    idealFor: ["Scanned pages", "Print-ready docs", "Presentation decks"]
+  },
+  {
+    slug: "delete",
+    name: "Delete Pages",
+    shortDescription: "Remove pages by range or odd/even rule.",
+    longDescription: "Delete unwanted pages in bulk by custom ranges or parity filters.",
+    icon: "🗑",
+    category: "organize",
+    color: "from-rose-500/20 to-red-500/20",
+    borderColor: "border-rose-400/35",
+    gradient: "from-rose-300 to-red-300",
+    keywords: ["remove", "cleanup", "odd", "even"],
+    outputs: ["cleaned PDF"],
+    idealFor: ["Draft cleanup", "Scan cleanup", "Appendix removal"]
+  },
+  {
+    slug: "reverse",
+    name: "Reverse Pages",
+    shortDescription: "Reverse page order instantly.",
+    longDescription: "Flip document page order for reverse-printed scans and archival corrections.",
+    icon: "↺",
+    category: "organize",
+    color: "from-indigo-500/20 to-violet-500/20",
+    borderColor: "border-indigo-400/35",
+    gradient: "from-indigo-300 to-violet-300",
+    keywords: ["reverse", "reorder", "flip", "sequence"],
+    outputs: ["reversed PDF"],
+    idealFor: ["Back scans", "Print corrections", "Legacy docs"]
   }
 ];
 
@@ -154,6 +224,20 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     description: "Add DRAFT watermark and rotate misoriented scans before sharing.",
     steps: ["watermark", "rotate", "compress"],
     badge: "Editorial"
+  },
+  {
+    id: "publish-ready",
+    name: "Publish Ready",
+    description: "Crop margins, add page numbers, and set metadata before final export.",
+    steps: ["crop", "number", "metadata"],
+    badge: "Publishing"
+  },
+  {
+    id: "scan-cleanup",
+    name: "Scan Cleanup",
+    description: "Remove unwanted pages and reverse order for corrected scan packets.",
+    steps: ["delete", "reverse"],
+    badge: "Ops"
   }
 ];
 

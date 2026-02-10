@@ -137,6 +137,169 @@ export async function watermarkPdf(file: File, options: WatermarkOptions) {
   return pdf.save();
 }
 
+export type PageNumberPosition =
+  | "bottom-center"
+  | "bottom-right"
+  | "bottom-left"
+  | "top-center"
+  | "top-right"
+  | "top-left";
+
+export type PageNumberOptions = {
+  startAt: number;
+  prefix: string;
+  suffix: string;
+  position: PageNumberPosition;
+  fontSize: number;
+  opacity: number;
+  ranges?: PageRange[];
+};
+
+export async function addPageNumbers(file: File, options: PageNumberOptions) {
+  const bytes = await file.arrayBuffer();
+  const pdf = await PDFDocument.load(bytes);
+  const pageIndexes = resolvePageIndexes(pdf, options.ranges);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const fontSize = clamp(options.fontSize, 8, 60);
+  const opacity = clamp(options.opacity, 0.08, 1);
+  const startAt = Math.max(1, Math.floor(options.startAt || 1));
+  const prefix = options.prefix ?? "";
+  const suffix = options.suffix ?? "";
+  const color = rgb(0.18, 0.21, 0.27);
+
+  pageIndexes.forEach((pageIndex, idx) => {
+    const page = pdf.getPage(pageIndex);
+    const text = `${prefix}${startAt + idx}${suffix}`;
+    const textWidth = font.widthOfTextAtSize(text, fontSize);
+    const textHeight = font.heightAtSize(fontSize);
+    const margin = Math.max(12, Math.round(fontSize * 0.8));
+    const { x, y } = computePosition(
+      options.position,
+      page.getWidth(),
+      page.getHeight(),
+      textWidth,
+      textHeight,
+      margin
+    );
+    page.drawText(text, {
+      x,
+      y,
+      size: fontSize,
+      font,
+      color,
+      opacity
+    });
+  });
+
+  return pdf.save();
+}
+
+export type MetadataOptions = {
+  title?: string;
+  author?: string;
+  subject?: string;
+  keywords?: string;
+  creator?: string;
+  producer?: string;
+};
+
+export async function updatePdfMetadata(file: File, options: MetadataOptions) {
+  const bytes = await file.arrayBuffer();
+  const pdf = await PDFDocument.load(bytes);
+
+  if (typeof options.title === "string") pdf.setTitle(options.title.trim());
+  if (typeof options.author === "string") pdf.setAuthor(options.author.trim());
+  if (typeof options.subject === "string") pdf.setSubject(options.subject.trim());
+  if (typeof options.creator === "string") pdf.setCreator(options.creator.trim());
+  if (typeof options.producer === "string") pdf.setProducer(options.producer.trim());
+  if (typeof options.keywords === "string") {
+    const words = options.keywords
+      .split(",")
+      .map((keyword) => keyword.trim())
+      .filter(Boolean);
+    pdf.setKeywords(words);
+  }
+  pdf.setModificationDate(new Date());
+
+  return pdf.save();
+}
+
+export type CropOptions = {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+  ranges?: PageRange[];
+};
+
+export async function cropPdf(file: File, options: CropOptions) {
+  const bytes = await file.arrayBuffer();
+  const pdf = await PDFDocument.load(bytes);
+  const pageIndexes = resolvePageIndexes(pdf, options.ranges);
+
+  pageIndexes.forEach((pageIndex) => {
+    const page = pdf.getPage(pageIndex);
+    const media = page.getMediaBox();
+    const baseX = media.x ?? 0;
+    const baseY = media.y ?? 0;
+    const width = media.width;
+    const height = media.height;
+
+    const left = clamp(options.left, 0, width * 0.45);
+    const right = clamp(options.right, 0, width * 0.45);
+    const top = clamp(options.top, 0, height * 0.45);
+    const bottom = clamp(options.bottom, 0, height * 0.45);
+
+    const croppedWidth = Math.max(20, width - left - right);
+    const croppedHeight = Math.max(20, height - top - bottom);
+    page.setCropBox(baseX + left, baseY + bottom, croppedWidth, croppedHeight);
+  });
+
+  return pdf.save();
+}
+
+export async function deletePagesPdf(
+  file: File,
+  options: { mode: "ranges" | "odd" | "even"; ranges?: PageRange[] }
+) {
+  const bytes = await file.arrayBuffer();
+  const pdf = await PDFDocument.load(bytes);
+  const pageCount = pdf.getPageCount();
+
+  let deleteIndexes: number[] = [];
+  if (options.mode === "odd") {
+    deleteIndexes = Array.from({ length: pageCount }, (_, index) => index).filter((index) => index % 2 === 0);
+  } else if (options.mode === "even") {
+    deleteIndexes = Array.from({ length: pageCount }, (_, index) => index).filter((index) => index % 2 === 1);
+  } else {
+    if (!options.ranges?.length) {
+      throw new Error("Provide at least one range to delete.");
+    }
+    deleteIndexes = resolvePageIndexes(pdf, options.ranges);
+  }
+
+  const keepCount = pageCount - deleteIndexes.length;
+  if (keepCount < 1) {
+    throw new Error("Cannot delete all pages. Keep at least one page.");
+  }
+
+  [...deleteIndexes]
+    .sort((a, b) => b - a)
+    .forEach((index) => pdf.removePage(index));
+
+  return pdf.save();
+}
+
+export async function reversePagesPdf(file: File) {
+  const bytes = await file.arrayBuffer();
+  const source = await PDFDocument.load(bytes);
+  const output = await PDFDocument.create();
+  const reversedIndexes = source.getPageIndices().reverse();
+  const copied = await output.copyPages(source, reversedIndexes);
+  copied.forEach((page) => output.addPage(page));
+  return output.save();
+}
+
 export async function stampSignature(
   file: File,
   signatureDataUrl: string,
@@ -256,4 +419,30 @@ function getJpegQualityForDpi(dpi: number) {
   const clamped = Math.min(220, Math.max(96, dpi));
   const ratio = (clamped - 96) / (220 - 96);
   return 0.45 + ratio * 0.35;
+}
+
+function computePosition(
+  position: PageNumberPosition,
+  pageWidth: number,
+  pageHeight: number,
+  textWidth: number,
+  textHeight: number,
+  margin: number
+) {
+  const horizontal = (() => {
+    if (position.endsWith("right")) return pageWidth - margin - textWidth;
+    if (position.endsWith("left")) return margin;
+    return (pageWidth - textWidth) / 2;
+  })();
+
+  const vertical = (() => {
+    if (position.startsWith("top")) return pageHeight - margin - textHeight;
+    return margin;
+  })();
+
+  return { x: horizontal, y: vertical };
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }

@@ -4,13 +4,18 @@ import type { Metadata, Viewport } from "next";
 export const metadata: Metadata = {
   title: "PDF Vault - Browser PDF Workspace",
   description:
-    "A feature-rich browser PDF workspace to merge, split, rotate, watermark, sign, redact, and compress files with local-only processing.",
+    "A feature-rich browser PDF workspace to merge, split, crop, delete, reverse, number, watermark, sign, redact, and compress files with local-only processing.",
   keywords: [
     "PDF tools",
     "offline PDF",
     "PDF workspace",
     "merge PDF",
     "split PDF",
+    "crop PDF",
+    "delete PDF pages",
+    "reverse PDF",
+    "page numbers PDF",
+    "edit PDF metadata",
     "rotate PDF",
     "watermark PDF",
     "sign PDF",

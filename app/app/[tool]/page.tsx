@@ -24,13 +24,18 @@ import {
   type ToolSlug
 } from "../../../src/storage/indexedDb";
 import {
+  addPageNumbers,
   compressPdf,
+  cropPdf,
+  deletePagesPdf,
   mergePdfs,
   parsePageRanges,
   redactPdf,
+  reversePagesPdf,
   rotatePdf,
   splitPdf,
   stampSignature,
+  updatePdfMetadata,
   watermarkPdf,
   type PageRange
 } from "../../../src/engine/pdfEngine";
@@ -38,6 +43,7 @@ import { loadSignature, saveSignature } from "../../../src/storage/indexedDb";
 
 type SplitMode = "single-file" | "file-per-range";
 type WatermarkScope = "all" | "first" | "last" | "range";
+type DeleteMode = "ranges" | "odd" | "even";
 
 const DEFAULT_SIGNATURE_PLACEMENT: Rect = {
   x: 0.12,
@@ -74,6 +80,32 @@ function ToolWorkbench() {
   const [watermarkSize, setWatermarkSize] = useState(52);
   const [watermarkScope, setWatermarkScope] = useState<WatermarkScope>("all");
   const [watermarkRange, setWatermarkRange] = useState("");
+
+  const [numberPrefix, setNumberPrefix] = useState("Page ");
+  const [numberSuffix, setNumberSuffix] = useState("");
+  const [numberStart, setNumberStart] = useState(1);
+  const [numberPosition, setNumberPosition] = useState<
+    "bottom-center" | "bottom-right" | "bottom-left" | "top-center" | "top-right" | "top-left"
+  >("bottom-center");
+  const [numberSize, setNumberSize] = useState(12);
+  const [numberOpacity, setNumberOpacity] = useState(0.9);
+  const [numberRanges, setNumberRanges] = useState("");
+
+  const [metaTitle, setMetaTitle] = useState("");
+  const [metaAuthor, setMetaAuthor] = useState("");
+  const [metaSubject, setMetaSubject] = useState("");
+  const [metaKeywords, setMetaKeywords] = useState("");
+  const [metaCreator, setMetaCreator] = useState("PDF Vault");
+  const [metaProducer, setMetaProducer] = useState("PDF Vault");
+
+  const [cropTop, setCropTop] = useState(20);
+  const [cropRight, setCropRight] = useState(20);
+  const [cropBottom, setCropBottom] = useState(20);
+  const [cropLeft, setCropLeft] = useState(20);
+  const [cropRanges, setCropRanges] = useState("");
+
+  const [deleteMode, setDeleteMode] = useState<DeleteMode>("ranges");
+  const [deleteRanges, setDeleteRanges] = useState("1");
 
   const [outputPrefix, setOutputPrefix] = useState("pdf-vault");
   const [output, setOutput] = useState<ExportInfo | null>(null);
@@ -206,6 +238,12 @@ function ToolWorkbench() {
     return [{ start: previewPages.length - 1, end: previewPages.length - 1 }];
   };
 
+  const getOptionalRanges = (value: string): PageRange[] | undefined => {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    return parsePageRanges(trimmed);
+  };
+
   const buildOutputs = useCallback(async (): Promise<ExportFileInfo[]> => {
     if (!files.length) {
       throw new Error("Add at least one PDF file to continue.");
@@ -233,6 +271,21 @@ function ToolWorkbench() {
       const rotateParsed = rotateRanges.trim() ? parsePageRanges(rotateRanges) : undefined;
       const data = await rotatePdf(primaryFile, rotateDegrees, rotateParsed);
       return [toOutputFile(data, buildName("rotated"))];
+    }
+
+    if (tool === "reverse") {
+      if (!primaryFile) throw new Error("Upload a PDF to reverse.");
+      const data = await reversePagesPdf(primaryFile);
+      return [toOutputFile(data, buildName("reversed"))];
+    }
+
+    if (tool === "delete") {
+      if (!primaryFile) throw new Error("Upload a PDF to delete pages.");
+      const data = await deletePagesPdf(primaryFile, {
+        mode: deleteMode,
+        ranges: deleteMode === "ranges" ? parsePageRanges(deleteRanges) : undefined
+      });
+      return [toOutputFile(data, buildName("deleted-pages"))];
     }
 
     if (tool === "sign") {
@@ -269,6 +322,18 @@ function ToolWorkbench() {
       return [toOutputFile(data, buildName("compressed"))];
     }
 
+    if (tool === "crop") {
+      if (!primaryFile) throw new Error("Upload a PDF to crop.");
+      const data = await cropPdf(primaryFile, {
+        top: cropTop,
+        right: cropRight,
+        bottom: cropBottom,
+        left: cropLeft,
+        ranges: getOptionalRanges(cropRanges)
+      });
+      return [toOutputFile(data, buildName("cropped"))];
+    }
+
     if (tool === "watermark") {
       if (!primaryFile) throw new Error("Upload a PDF to watermark.");
       if (!watermarkText.trim()) throw new Error("Watermark text cannot be empty.");
@@ -280,6 +345,43 @@ function ToolWorkbench() {
         ranges: getWatermarkRanges()
       });
       return [toOutputFile(data, buildName("watermarked"))];
+    }
+
+    if (tool === "number") {
+      if (!primaryFile) throw new Error("Upload a PDF to add page numbers.");
+      const data = await addPageNumbers(primaryFile, {
+        startAt: Math.max(1, Math.floor(numberStart)),
+        prefix: numberPrefix,
+        suffix: numberSuffix,
+        position: numberPosition,
+        fontSize: numberSize,
+        opacity: numberOpacity,
+        ranges: getOptionalRanges(numberRanges)
+      });
+      return [toOutputFile(data, buildName("numbered"))];
+    }
+
+    if (tool === "metadata") {
+      if (!primaryFile) throw new Error("Upload a PDF to edit metadata.");
+      const hasAnyValue =
+        metaTitle.trim() ||
+        metaAuthor.trim() ||
+        metaSubject.trim() ||
+        metaKeywords.trim() ||
+        metaCreator.trim() ||
+        metaProducer.trim();
+      if (!hasAnyValue) {
+        throw new Error("Enter at least one metadata field to update.");
+      }
+      const data = await updatePdfMetadata(primaryFile, {
+        title: metaTitle,
+        author: metaAuthor,
+        subject: metaSubject,
+        keywords: metaKeywords,
+        creator: metaCreator,
+        producer: metaProducer
+      });
+      return [toOutputFile(data, buildName("metadata-updated"))];
     }
 
     throw new Error("Unsupported tool");
@@ -295,15 +397,35 @@ function ToolWorkbench() {
     selectedPage,
     signature,
     splitMode,
+    deleteMode,
+    deleteRanges,
     tool,
     redactions,
     dpi,
+    cropTop,
+    cropRight,
+    cropBottom,
+    cropLeft,
+    cropRanges,
     watermarkText,
     watermarkOpacity,
     watermarkAngle,
     watermarkSize,
     watermarkScope,
-    watermarkRange
+    watermarkRange,
+    numberStart,
+    numberPrefix,
+    numberSuffix,
+    numberPosition,
+    numberSize,
+    numberOpacity,
+    numberRanges,
+    metaTitle,
+    metaAuthor,
+    metaSubject,
+    metaKeywords,
+    metaCreator,
+    metaProducer
   ]);
 
   const handleProcess = useCallback(async () => {
@@ -508,6 +630,48 @@ function ToolWorkbench() {
                   </>
                 )}
 
+                {tool === "reverse" && (
+                  <div className="rounded-2xl border border-indigo-300/30 bg-indigo-300/10 p-3 text-xs text-indigo-100">
+                    Reverses the full page order from last page to first page.
+                  </div>
+                )}
+
+                {tool === "delete" && (
+                  <>
+                    <div>
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
+                        Delete Mode
+                      </p>
+                      <div className="grid grid-cols-3 gap-2">
+                        <ToggleChip
+                          active={deleteMode === "ranges"}
+                          onClick={() => setDeleteMode("ranges")}
+                          label="ranges"
+                        />
+                        <ToggleChip
+                          active={deleteMode === "odd"}
+                          onClick={() => setDeleteMode("odd")}
+                          label="odd pages"
+                        />
+                        <ToggleChip
+                          active={deleteMode === "even"}
+                          onClick={() => setDeleteMode("even")}
+                          label="even pages"
+                        />
+                      </div>
+                    </div>
+                    {deleteMode === "ranges" && (
+                      <OptionInput
+                        label="Ranges to delete"
+                        value={deleteRanges}
+                        onChange={setDeleteRanges}
+                        placeholder="1,3-5"
+                        hint="Example: 1, 3-5, 8"
+                      />
+                    )}
+                  </>
+                )}
+
                 {(tool === "redact" || tool === "compress") && (
                   <div>
                     <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
@@ -530,6 +694,48 @@ function ToolWorkbench() {
                       Lower values reduce size more; higher values preserve more detail.
                     </p>
                   </div>
+                )}
+
+                {tool === "crop" && (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <RangeControl
+                        label={`Top ${cropTop}px`}
+                        min={0}
+                        max={220}
+                        value={cropTop}
+                        onChange={setCropTop}
+                      />
+                      <RangeControl
+                        label={`Right ${cropRight}px`}
+                        min={0}
+                        max={220}
+                        value={cropRight}
+                        onChange={setCropRight}
+                      />
+                      <RangeControl
+                        label={`Bottom ${cropBottom}px`}
+                        min={0}
+                        max={220}
+                        value={cropBottom}
+                        onChange={setCropBottom}
+                      />
+                      <RangeControl
+                        label={`Left ${cropLeft}px`}
+                        min={0}
+                        max={220}
+                        value={cropLeft}
+                        onChange={setCropLeft}
+                      />
+                    </div>
+                    <OptionInput
+                      label="Crop ranges (optional)"
+                      value={cropRanges}
+                      onChange={setCropRanges}
+                      placeholder="Leave empty for all pages"
+                      hint="Example: 2-10"
+                    />
+                  </>
                 )}
 
                 {tool === "watermark" && (
@@ -585,6 +791,97 @@ function ToolWorkbench() {
                       />
                     )}
                   </>
+                )}
+
+                {tool === "number" && (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <OptionInput
+                        label="Prefix"
+                        value={numberPrefix}
+                        onChange={setNumberPrefix}
+                        placeholder="Page "
+                      />
+                      <OptionInput
+                        label="Suffix"
+                        value={numberSuffix}
+                        onChange={setNumberSuffix}
+                        placeholder=""
+                      />
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <RangeControl
+                        label={`Start ${numberStart}`}
+                        min={1}
+                        max={999}
+                        value={numberStart}
+                        onChange={setNumberStart}
+                      />
+                      <RangeControl
+                        label={`Size ${numberSize}`}
+                        min={8}
+                        max={48}
+                        value={numberSize}
+                        onChange={setNumberSize}
+                      />
+                      <RangeControl
+                        label={`Opacity ${(numberOpacity * 100).toFixed(0)}%`}
+                        min={10}
+                        max={100}
+                        value={Math.round(numberOpacity * 100)}
+                        onChange={(value) => setNumberOpacity(value / 100)}
+                      />
+                    </div>
+                    <div>
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Position</p>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {(
+                          [
+                            "bottom-left",
+                            "bottom-center",
+                            "bottom-right",
+                            "top-left",
+                            "top-center",
+                            "top-right"
+                          ] as const
+                        ).map((position) => (
+                          <ToggleChip
+                            key={position}
+                            active={numberPosition === position}
+                            onClick={() => setNumberPosition(position)}
+                            label={position.replace("-", " ")}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <OptionInput
+                      label="Apply to ranges (optional)"
+                      value={numberRanges}
+                      onChange={setNumberRanges}
+                      placeholder="Leave empty for all pages"
+                    />
+                  </>
+                )}
+
+                {tool === "metadata" && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <OptionInput label="Title" value={metaTitle} onChange={setMetaTitle} placeholder="Document title" />
+                    <OptionInput label="Author" value={metaAuthor} onChange={setMetaAuthor} placeholder="Author name" />
+                    <OptionInput label="Subject" value={metaSubject} onChange={setMetaSubject} placeholder="Subject" />
+                    <OptionInput
+                      label="Keywords"
+                      value={metaKeywords}
+                      onChange={setMetaKeywords}
+                      placeholder="comma,separated,keywords"
+                    />
+                    <OptionInput label="Creator" value={metaCreator} onChange={setMetaCreator} placeholder="Creator app" />
+                    <OptionInput
+                      label="Producer"
+                      value={metaProducer}
+                      onChange={setMetaProducer}
+                      placeholder="Producer app"
+                    />
+                  </div>
                 )}
               </div>
             </section>
@@ -664,6 +961,34 @@ function ToolWorkbench() {
               setSelectedPage(0);
               setRedactions({});
               setPlacement(DEFAULT_SIGNATURE_PLACEMENT);
+              setRotateDegrees(90);
+              setRotateRanges("");
+              setDeleteMode("ranges");
+              setDeleteRanges("1");
+              setCropTop(20);
+              setCropRight(20);
+              setCropBottom(20);
+              setCropLeft(20);
+              setCropRanges("");
+              setWatermarkText("CONFIDENTIAL");
+              setWatermarkOpacity(0.16);
+              setWatermarkAngle(-35);
+              setWatermarkSize(52);
+              setWatermarkScope("all");
+              setWatermarkRange("");
+              setNumberPrefix("Page ");
+              setNumberSuffix("");
+              setNumberStart(1);
+              setNumberPosition("bottom-center");
+              setNumberSize(12);
+              setNumberOpacity(0.9);
+              setNumberRanges("");
+              setMetaTitle("");
+              setMetaAuthor("");
+              setMetaSubject("");
+              setMetaKeywords("");
+              setMetaCreator("PDF Vault");
+              setMetaProducer("PDF Vault");
               clearOutput();
               setError(null);
             }}
