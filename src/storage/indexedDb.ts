@@ -13,7 +13,14 @@ export type RecentFile = {
   lastOpened: number;
 };
 
-export type ToolSlug = "merge" | "split" | "sign" | "redact" | "compress";
+export type ToolSlug =
+  | "merge"
+  | "split"
+  | "sign"
+  | "redact"
+  | "compress"
+  | "rotate"
+  | "watermark";
 
 export type RunHistoryItem = {
   id: string;
@@ -176,7 +183,15 @@ function clampPreferenceNumber(
 }
 
 function dedupeTools(tools: ToolSlug[]) {
-  const valid = new Set<ToolSlug>(["merge", "split", "sign", "redact", "compress"]);
+  const valid = new Set<ToolSlug>([
+    "merge",
+    "split",
+    "sign",
+    "redact",
+    "compress",
+    "rotate",
+    "watermark"
+  ]);
   const seen = new Set<ToolSlug>();
   const output: ToolSlug[] = [];
   for (const item of tools) {

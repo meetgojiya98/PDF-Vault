@@ -95,6 +95,34 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     keywords: ["optimize", "reduce", "email", "upload limit"],
     outputs: ["optimized PDF"],
     idealFor: ["Email sending", "Portal uploads", "Storage savings"]
+  },
+  {
+    slug: "rotate",
+    name: "Rotate Pages",
+    shortDescription: "Rotate all pages or selected ranges.",
+    longDescription: "Fix scanned orientation in one click, or rotate only selected page ranges.",
+    icon: "↻",
+    category: "organize",
+    color: "from-fuchsia-500/20 to-violet-500/20",
+    borderColor: "border-fuchsia-400/35",
+    gradient: "from-fuchsia-300 to-violet-300",
+    keywords: ["orientation", "landscape", "portrait", "scan"],
+    outputs: ["rotated PDF"],
+    idealFor: ["Scanned forms", "Camera captures", "Archival cleanup"]
+  },
+  {
+    slug: "watermark",
+    name: "Watermark",
+    shortDescription: "Apply text watermark across pages.",
+    longDescription: "Overlay custom text like DRAFT or CONFIDENTIAL with opacity and angle controls.",
+    icon: "🪪",
+    category: "review",
+    color: "from-cyan-500/20 to-blue-500/20",
+    borderColor: "border-cyan-400/35",
+    gradient: "from-cyan-300 to-blue-300",
+    keywords: ["confidential", "draft", "brand", "overlay"],
+    outputs: ["watermarked PDF"],
+    idealFor: ["Internal reviews", "Draft circulation", "Brand control"]
   }
 ];
 
@@ -119,6 +147,13 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     description: "Merge forms and certificates, then compress for upload limits.",
     steps: ["merge", "compress"],
     badge: "Fast"
+  },
+  {
+    id: "draft-review",
+    name: "Draft Review",
+    description: "Add DRAFT watermark and rotate misoriented scans before sharing.",
+    steps: ["watermark", "rotate", "compress"],
+    badge: "Editorial"
   }
 ];
 

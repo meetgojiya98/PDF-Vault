@@ -6,14 +6,16 @@ export function viewToPdfRect(
   pageHeight: number,
   zoom: number
 ): Rect {
-  const scaledX = rect.x / zoom;
-  const scaledY = rect.y / zoom;
-  const scaledWidth = rect.width / zoom;
-  const scaledHeight = rect.height / zoom;
+  const safeZoom = zoom > 0 ? zoom : 1;
+  const scaledX = rect.x / safeZoom;
+  const scaledY = rect.y / safeZoom;
+  const scaledWidth = rect.width / safeZoom;
+  const scaledHeight = rect.height / safeZoom;
+  const pdfHeight = pageHeight / safeZoom;
 
   return {
     x: scaledX,
-    y: pageHeight - scaledY - scaledHeight,
+    y: pdfHeight - scaledY - scaledHeight,
     width: scaledWidth,
     height: scaledHeight
   };
@@ -25,10 +27,12 @@ export function pdfToViewRect(
   pageHeight: number,
   zoom: number
 ): Rect {
+  const safeZoom = zoom > 0 ? zoom : 1;
+  const pdfHeight = pageHeight / safeZoom;
   return {
-    x: rect.x * zoom,
-    y: (pageHeight - rect.y - rect.height) * zoom,
-    width: rect.width * zoom,
-    height: rect.height * zoom
+    x: rect.x * safeZoom,
+    y: (pdfHeight - rect.y - rect.height) * safeZoom,
+    width: rect.width * safeZoom,
+    height: rect.height * safeZoom
   };
 }

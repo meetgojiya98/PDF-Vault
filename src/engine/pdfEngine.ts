@@ -1,4 +1,4 @@
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, StandardFonts, degrees, rgb } from "pdf-lib";
 import { renderPdfPages } from "./worker/workerClient";
 import type { Rect } from "../utils/coords";
 
@@ -53,21 +53,18 @@ export async function splitPdf(
 ) {
   const bytes = await file.arrayBuffer();
   const source = await PDFDocument.load(bytes);
-  const pageCount = source.getPageCount();
-  const normalizedRanges = normalizeRanges(ranges, pageCount);
+  const pageIndexes = resolvePageIndexes(source, ranges);
   const outputs: Uint8Array[] = [];
 
   if (mode === "single-file") {
     const doc = await PDFDocument.create();
-    const pageIndexes = normalizedRanges.flatMap((range) =>
-      source.getPageIndices().filter((index) => index >= range.start && index <= range.end)
-    );
     const pages = await doc.copyPages(source, pageIndexes);
     pages.forEach((page) => doc.addPage(page));
     outputs.push(await doc.save());
     return outputs;
   }
 
+  const normalizedRanges = normalizeRanges(ranges, source.getPageCount());
   for (const range of normalizedRanges) {
     const doc = await PDFDocument.create();
     const pages = await doc.copyPages(
@@ -79,6 +76,65 @@ export async function splitPdf(
   }
 
   return outputs;
+}
+
+export async function rotatePdf(file: File, degreesToRotate: 90 | 180 | 270, ranges?: PageRange[]) {
+  const bytes = await file.arrayBuffer();
+  const pdf = await PDFDocument.load(bytes);
+  const pageIndexes = resolvePageIndexes(pdf, ranges);
+  const pageSet = new Set(pageIndexes);
+
+  pdf.getPages().forEach((page, index) => {
+    if (!pageSet.has(index)) return;
+    const current = page.getRotation().angle ?? 0;
+    page.setRotation(degrees((current + degreesToRotate) % 360));
+  });
+
+  return pdf.save();
+}
+
+export type WatermarkOptions = {
+  text: string;
+  opacity: number;
+  angle: number;
+  fontSize: number;
+  ranges?: PageRange[];
+};
+
+export async function watermarkPdf(file: File, options: WatermarkOptions) {
+  const bytes = await file.arrayBuffer();
+  const pdf = await PDFDocument.load(bytes);
+  const pageIndexes = resolvePageIndexes(pdf, options.ranges);
+  const pageSet = new Set(pageIndexes);
+  const text = options.text.trim();
+  if (!text) {
+    throw new Error("Watermark text is required.");
+  }
+
+  const font = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const opacity = Math.min(1, Math.max(0.05, options.opacity));
+  const fontSize = Math.min(180, Math.max(10, options.fontSize));
+  const angle = Math.min(89, Math.max(-89, options.angle));
+  const textColor = rgb(0.35, 0.4, 0.5);
+
+  pdf.getPages().forEach((page, index) => {
+    if (!pageSet.has(index)) return;
+    const width = page.getWidth();
+    const height = page.getHeight();
+    const textWidth = font.widthOfTextAtSize(text, fontSize);
+
+    page.drawText(text, {
+      x: width / 2 - textWidth / 2,
+      y: height / 2,
+      size: fontSize,
+      rotate: degrees(angle),
+      font,
+      color: textColor,
+      opacity
+    });
+  });
+
+  return pdf.save();
 }
 
 export async function stampSignature(
@@ -131,7 +187,7 @@ export async function redactPdf(
   return rebuildFromImages(rendered);
 }
 
-function normalizeRanges(ranges: PageRange[], pageCount: number) {
+export function normalizeRanges(ranges: PageRange[], pageCount: number) {
   if (!ranges.length) {
     throw new Error("At least one range is required.");
   }
@@ -150,4 +206,15 @@ function normalizeRanges(ranges: PageRange[], pageCount: number) {
     throw new Error("The selected ranges are outside the available pages.");
   }
   return output;
+}
+
+export function resolvePageIndexes(source: PDFDocument, ranges?: PageRange[]) {
+  if (!ranges?.length) {
+    return source.getPageIndices();
+  }
+  const normalizedRanges = normalizeRanges(ranges, source.getPageCount());
+  return normalizedRanges
+    .flatMap((range) => source.getPageIndices().filter((index) => index >= range.start && index <= range.end))
+    .filter((value, index, all) => all.indexOf(value) === index)
+    .sort((a, b) => a - b);
 }

@@ -16,7 +16,7 @@ export function RedactionCanvas({
   const [draft, setDraft] = useState<Rect | null>(null);
 
   const start = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || !image) return;
     const rect = containerRef.current.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
@@ -37,7 +37,12 @@ export function RedactionCanvas({
   };
 
   const end = () => {
-    if (draft) {
+    if (draft && containerRef.current) {
+      const bounds = containerRef.current.getBoundingClientRect();
+      if (!bounds.width || !bounds.height) {
+        setDraft(null);
+        return;
+      }
       const normalized = {
         x: Math.min(draft.x, draft.x + draft.width),
         y: Math.min(draft.y, draft.y + draft.height),
@@ -45,7 +50,13 @@ export function RedactionCanvas({
         height: Math.abs(draft.height)
       };
       if (normalized.width > 4 && normalized.height > 4) {
-        onChange([...rects, normalized]);
+        const percentRect = {
+          x: normalized.x / bounds.width,
+          y: normalized.y / bounds.height,
+          width: normalized.width / bounds.width,
+          height: normalized.height / bounds.height
+        };
+        onChange([...rects, clampNormalizedRect(percentRect)]);
       }
     }
     setDraft(null);
@@ -105,10 +116,10 @@ export function RedactionCanvas({
             key={index}
             className="absolute border-2 border-red-400 bg-red-500/40 backdrop-blur-sm group cursor-pointer"
             style={{
-              left: rect.x,
-              top: rect.y,
-              width: rect.width,
-              height: rect.height
+              left: `${rect.x * 100}%`,
+              top: `${rect.y * 100}%`,
+              width: `${rect.width * 100}%`,
+              height: `${rect.height * 100}%`
             }}
             onClick={(e) => {
               e.stopPropagation();
@@ -145,4 +156,16 @@ export function RedactionCanvas({
       </div>
     </div>
   );
+}
+
+function clampNormalizedRect(rect: Rect): Rect {
+  const x = clamp(rect.x, 0, 1);
+  const y = clamp(rect.y, 0, 1);
+  const width = clamp(rect.width, 0.01, 1 - x);
+  const height = clamp(rect.height, 0.01, 1 - y);
+  return { x, y, width, height };
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }

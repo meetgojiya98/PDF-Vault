@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import ReactDOM from "react-dom";
 import { AppShell } from "../../../src/components/AppShell";
@@ -23,10 +23,28 @@ import {
   touchRecentFiles,
   type ToolSlug
 } from "../../../src/storage/indexedDb";
-import { parsePageRanges, mergePdfs, splitPdf, stampSignature, redactPdf, compressPdf } from "../../../src/engine/pdfEngine";
+import {
+  compressPdf,
+  mergePdfs,
+  parsePageRanges,
+  redactPdf,
+  rotatePdf,
+  splitPdf,
+  stampSignature,
+  watermarkPdf,
+  type PageRange
+} from "../../../src/engine/pdfEngine";
 import { loadSignature, saveSignature } from "../../../src/storage/indexedDb";
 
 type SplitMode = "single-file" | "file-per-range";
+type WatermarkScope = "all" | "first" | "last" | "range";
+
+const DEFAULT_SIGNATURE_PLACEMENT: Rect = {
+  x: 0.12,
+  y: 0.16,
+  width: 0.28,
+  height: 0.12
+};
 
 function ToolWorkbench() {
   const params = useParams();
@@ -39,35 +57,47 @@ function ToolWorkbench() {
   const [files, setFiles] = useState<File[]>([]);
   const [previewPages, setPreviewPages] = useState<PagePreview[]>([]);
   const [selectedPage, setSelectedPage] = useState(0);
+
   const [ranges, setRanges] = useState("1-3");
+  const [splitMode, setSplitMode] = useState<SplitMode>("single-file");
+  const [rotateDegrees, setRotateDegrees] = useState<90 | 180 | 270>(90);
+  const [rotateRanges, setRotateRanges] = useState("");
+
   const [signature, setSignature] = useState<string | null>(null);
-  const [placement, setPlacement] = useState<Rect>({ x: 70, y: 90, width: 170, height: 80 });
+  const [placement, setPlacement] = useState<Rect>(DEFAULT_SIGNATURE_PLACEMENT);
   const [redactions, setRedactions] = useState<Record<number, Rect[]>>({});
   const [dpi, setDpi] = useState(150);
-  const [splitMode, setSplitMode] = useState<SplitMode>("single-file");
+
+  const [watermarkText, setWatermarkText] = useState("CONFIDENTIAL");
+  const [watermarkOpacity, setWatermarkOpacity] = useState(0.16);
+  const [watermarkAngle, setWatermarkAngle] = useState(-35);
+  const [watermarkSize, setWatermarkSize] = useState(52);
+  const [watermarkScope, setWatermarkScope] = useState<WatermarkScope>("all");
+  const [watermarkRange, setWatermarkRange] = useState("");
+
   const [outputPrefix, setOutputPrefix] = useState("pdf-vault");
   const [output, setOutput] = useState<ExportInfo | null>(null);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [paywallOpen, setPaywallOpen] = useState(false);
-  const [creditConsumedForExport, setCreditConsumedForExport] = useState(false);
   const { consumeCredit, license } = useEntitlement();
   const outputRef = useRef<ExportInfo | null>(null);
-
-  const clearOutput = () => {
-    const existing = outputRef.current;
-    if (existing?.files.length) {
-      existing.files.forEach((file) => URL.revokeObjectURL(file.url));
-    }
-    outputRef.current = null;
-    setOutput(null);
-  };
+  const creditConsumedRef = useRef(false);
 
   const primaryFile = files[0] ?? null;
   const previewImage = useMemo(
     () => previewPages.find((page) => page.index === selectedPage)?.dataUrl ?? null,
     [previewPages, selectedPage]
   );
+
+  const clearOutput = useCallback(() => {
+    const existing = outputRef.current;
+    if (existing?.files.length) {
+      existing.files.forEach((file) => URL.revokeObjectURL(file.url));
+    }
+    outputRef.current = null;
+    setOutput(null);
+  }, []);
 
   useEffect(() => {
     loadWorkspacePreference().then((prefs) => {
@@ -85,27 +115,14 @@ function ToolWorkbench() {
   }, [tool]);
 
   useEffect(() => {
-    const openPaywall = () => setPaywallOpen(true);
-    window.addEventListener("openPaywall", openPaywall);
-    return () => window.removeEventListener("openPaywall", openPaywall);
-  }, []);
-
-  useEffect(() => {
     outputRef.current = output;
   }, [output]);
 
   useEffect(() => {
-    const onShortcut = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "enter") {
-        event.preventDefault();
-        if (!processing) {
-          void handleProcess();
-        }
-      }
-    };
-    window.addEventListener("keydown", onShortcut);
-    return () => window.removeEventListener("keydown", onShortcut);
-  });
+    const openPaywall = () => setPaywallOpen(true);
+    window.addEventListener("openPaywall", openPaywall);
+    return () => window.removeEventListener("openPaywall", openPaywall);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -116,18 +133,21 @@ function ToolWorkbench() {
     };
   }, []);
 
+  const updatePreference = useCallback(
+    async (next: { defaultDpi?: number; splitMode?: SplitMode; outputPrefix?: string }) => {
+      await saveWorkspacePreference(next);
+    },
+    []
+  );
+
   const handleFiles = (incoming: File[]) => {
     setFiles(incoming);
     setSelectedPage(0);
+    setPlacement(DEFAULT_SIGNATURE_PLACEMENT);
     setRedactions({});
     clearOutput();
     setError(null);
     void touchRecentFiles(incoming);
-  };
-
-  const handleSignatureSave = async (dataUrl: string) => {
-    setSignature(dataUrl);
-    await saveSignature(dataUrl);
   };
 
   const moveFile = (index: number, direction: -1 | 1) => {
@@ -138,60 +158,62 @@ function ToolWorkbench() {
     setFiles(next);
   };
 
-  const handleProcess = async () => {
-    if (!definition || processing) return;
-    setError(null);
-    setProcessing(true);
-    const start = performance.now();
-    try {
-      const built = await buildOutputs();
-      if (!built.length) {
-        throw new Error("No output generated. Please check your inputs.");
-      }
-
-      const durationMs = Math.round(performance.now() - start);
-      const outputInfo: ExportInfo = {
-        files: built,
-        summaryLabel: definition.name,
-        inputCount: files.length,
-        durationMs
-      };
-      setOutput((previous) => {
-        if (previous?.files.length) {
-          previous.files.forEach((file) => URL.revokeObjectURL(file.url));
-        }
-        return outputInfo;
-      });
-      setCreditConsumedForExport(false);
-
-      const inputBytes = files.reduce((sum, file) => sum + file.size, 0);
-      const outputBytes = built.reduce((sum, file) => sum + file.size, 0);
-      await addRunHistory({
-        id: `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
-        tool,
-        inputNames: files.map((file) => file.name),
-        outputNames: built.map((file) => file.name),
-        inputBytes,
-        outputBytes,
-        createdAt: Date.now(),
-        durationMs
-      });
-    } catch (issue) {
-      const message = issue instanceof Error ? issue.message : "Failed to process the file.";
-      setError(message);
-    } finally {
-      setProcessing(false);
-    }
+  const handleSignatureSave = async (dataUrl: string) => {
+    setSignature(dataUrl);
+    await saveSignature(dataUrl);
   };
 
-  const buildOutputs = async (): Promise<ExportFileInfo[]> => {
+  const buildName = useCallback(
+    (suffix: string) => {
+      const normalizedPrefix = outputPrefix.trim() || "pdf-vault";
+      return `${normalizedPrefix}-${suffix}-${new Date().toISOString().slice(0, 10)}.pdf`;
+    },
+    [outputPrefix]
+  );
+
+  const toOutputFile = (data: Uint8Array, name: string): ExportFileInfo => {
+    const stableBytes = new Uint8Array(data.length);
+    stableBytes.set(data);
+    const blob = new Blob([stableBytes], { type: "application/pdf" });
+    return {
+      name,
+      size: data.length,
+      url: URL.createObjectURL(blob)
+    };
+  };
+
+  const normalizedToViewRect = (rect: Rect, page: PagePreview): Rect => ({
+    x: rect.x * page.width,
+    y: rect.y * page.height,
+    width: rect.width * page.width,
+    height: rect.height * page.height
+  });
+
+  const getWatermarkRanges = (): PageRange[] | undefined => {
+    if (watermarkScope === "all") return undefined;
+    if (watermarkScope === "range") {
+      if (!watermarkRange.trim()) {
+        throw new Error("Enter page ranges for watermark scope.");
+      }
+      return parsePageRanges(watermarkRange);
+    }
+    if (!previewPages.length) {
+      throw new Error("Wait for page previews to load before using first/last page scope.");
+    }
+    if (watermarkScope === "first") {
+      return [{ start: 0, end: 0 }];
+    }
+    return [{ start: previewPages.length - 1, end: previewPages.length - 1 }];
+  };
+
+  const buildOutputs = useCallback(async (): Promise<ExportFileInfo[]> => {
     if (!files.length) {
       throw new Error("Add at least one PDF file to continue.");
     }
 
     if (tool === "merge") {
       if (files.length < 2) {
-        throw new Error("Merge needs at least two files.");
+        throw new Error("Merge requires at least two PDFs.");
       }
       const data = await mergePdfs(files);
       return [toOutputFile(data, buildName("merged"))];
@@ -206,12 +228,20 @@ function ToolWorkbench() {
       );
     }
 
+    if (tool === "rotate") {
+      if (!primaryFile) throw new Error("Upload a PDF to rotate.");
+      const rotateParsed = rotateRanges.trim() ? parsePageRanges(rotateRanges) : undefined;
+      const data = await rotatePdf(primaryFile, rotateDegrees, rotateParsed);
+      return [toOutputFile(data, buildName("rotated"))];
+    }
+
     if (tool === "sign") {
       if (!primaryFile) throw new Error("Upload a PDF to sign.");
       if (!signature) throw new Error("Draw and save a signature first.");
       const page = previewPages.find((item) => item.index === selectedPage);
-      if (!page) throw new Error("Select a page before stamping signature.");
-      const pdfRect = viewToPdfRect(placement, page.width, page.height, page.scale);
+      if (!page) throw new Error("Select a page to place signature.");
+      const viewRect = normalizedToViewRect(placement, page);
+      const pdfRect = viewToPdfRect(viewRect, page.width, page.height, page.scale);
       const data = await stampSignature(primaryFile, signature, selectedPage, pdfRect);
       return [toOutputFile(data, buildName("signed"))];
     }
@@ -224,8 +254,10 @@ function ToolWorkbench() {
       }
       const converted: Record<number, Rect[]> = {};
       previewPages.forEach((page) => {
-        const rects = redactions[page.index] ?? [];
-        converted[page.index] = rects.map((rect) => viewToPdfRect(rect, page.width, page.height, page.scale));
+        const pageRects = redactions[page.index] ?? [];
+        converted[page.index] = pageRects.map((rect) =>
+          viewToPdfRect(normalizedToViewRect(rect, page), page.width, page.height, page.scale)
+        );
       });
       const data = await redactPdf(primaryFile, converted, dpi);
       return [toOutputFile(data, buildName("redacted"))];
@@ -237,31 +269,100 @@ function ToolWorkbench() {
       return [toOutputFile(data, buildName("compressed"))];
     }
 
+    if (tool === "watermark") {
+      if (!primaryFile) throw new Error("Upload a PDF to watermark.");
+      if (!watermarkText.trim()) throw new Error("Watermark text cannot be empty.");
+      const data = await watermarkPdf(primaryFile, {
+        text: watermarkText,
+        opacity: watermarkOpacity,
+        angle: watermarkAngle,
+        fontSize: watermarkSize,
+        ranges: getWatermarkRanges()
+      });
+      return [toOutputFile(data, buildName("watermarked"))];
+    }
+
     throw new Error("Unsupported tool");
-  };
+  }, [
+    buildName,
+    files,
+    placement,
+    previewPages,
+    primaryFile,
+    ranges,
+    rotateDegrees,
+    rotateRanges,
+    selectedPage,
+    signature,
+    splitMode,
+    tool,
+    redactions,
+    dpi,
+    watermarkText,
+    watermarkOpacity,
+    watermarkAngle,
+    watermarkSize,
+    watermarkScope,
+    watermarkRange
+  ]);
 
-  const buildName = (suffix: string) => {
-    const normalizedPrefix = outputPrefix.trim() || "pdf-vault";
-    return `${normalizedPrefix}-${suffix}-${new Date().toISOString().slice(0, 10)}.pdf`;
-  };
+  const handleProcess = useCallback(async () => {
+    if (!definition || processing) return;
+    setError(null);
+    setProcessing(true);
+    const start = performance.now();
 
-  const toOutputFile = (data: Uint8Array, name: string): ExportFileInfo => {
-    const stableBytes = new Uint8Array(data.length);
-    stableBytes.set(data);
-    const blob = new Blob([stableBytes], { type: "application/pdf" });
-    return {
-      name,
-      size: data.length,
-      url: URL.createObjectURL(blob)
+    try {
+      const built = await buildOutputs();
+      if (!built.length) throw new Error("No output generated.");
+
+      clearOutput();
+      const durationMs = Math.round(performance.now() - start);
+      const outputInfo: ExportInfo = {
+        files: built,
+        summaryLabel: definition.name,
+        inputCount: files.length,
+        durationMs
+      };
+      outputRef.current = outputInfo;
+      setOutput(outputInfo);
+      creditConsumedRef.current = false;
+
+      await addRunHistory({
+        id: `${Date.now()}-${Math.random().toString(16).slice(2, 10)}`,
+        tool,
+        inputNames: files.map((file) => file.name),
+        outputNames: built.map((file) => file.name),
+        inputBytes: files.reduce((sum, file) => sum + file.size, 0),
+        outputBytes: built.reduce((sum, file) => sum + file.size, 0),
+        createdAt: Date.now(),
+        durationMs
+      });
+    } catch (issue) {
+      const message = issue instanceof Error ? issue.message : "Failed to process the file.";
+      setError(message);
+    } finally {
+      setProcessing(false);
+    }
+  }, [buildOutputs, clearOutput, definition, files, processing, tool]);
+
+  useEffect(() => {
+    const onShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "enter") {
+        event.preventDefault();
+        void handleProcess();
+      }
     };
-  };
+    window.addEventListener("keydown", onShortcut);
+    return () => window.removeEventListener("keydown", onShortcut);
+  }, [handleProcess]);
 
   const trackCredit = () => {
-    if (creditConsumedForExport) return;
+    if (creditConsumedRef.current) return;
     if (license && !license.proActive) {
       consumeCredit();
     }
-    setCreditConsumedForExport(true);
+    creditConsumedRef.current = true;
   };
 
   const downloadFile = (file: ExportFileInfo) => {
@@ -279,16 +380,12 @@ function ToolWorkbench() {
     });
   };
 
-  const updatePreference = async (next: { defaultDpi?: number; splitMode?: SplitMode; outputPrefix?: string }) => {
-    await saveWorkspacePreference(next);
-  };
-
   if (!definition) {
     return (
       <AppShell>
         <div className="rounded-3xl border border-white/15 bg-white/[0.03] p-10 text-center">
           <h1 className="text-2xl font-black text-white">Tool not found</h1>
-          <p className="mt-2 text-slate-300">Return to the workspace and choose a valid tool.</p>
+          <p className="mt-2 text-slate-300">Return to the workspace and select a supported tool.</p>
         </div>
       </AppShell>
     );
@@ -311,14 +408,18 @@ function ToolWorkbench() {
               <p className="text-sm font-bold text-cyan-100">Ctrl/Cmd + Enter to process</p>
             </div>
           </div>
+
           {workflow && (
             <div className="mt-4 rounded-2xl border border-cyan-300/35 bg-cyan-300/10 p-4">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-cyan-100">Workflow: {workflow.name}</p>
               <p className="mt-1 text-sm text-cyan-50/90">{workflow.description}</p>
             </div>
           )}
+
           {error && (
-            <div className="mt-4 rounded-2xl border border-red-300/45 bg-red-400/10 p-3 text-sm text-red-100">{error}</div>
+            <div className="mt-4 rounded-2xl border border-red-300/45 bg-red-400/10 p-3 text-sm text-red-100">
+              {error}
+            </div>
           )}
         </header>
 
@@ -345,10 +446,69 @@ function ToolWorkbench() {
                       void updatePreference({ outputPrefix: value });
                     }}
                     className="w-full rounded-xl border border-white/20 bg-slate-900/60 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/60"
+                    placeholder="pdf-vault"
                   />
                 </div>
 
-                {(tool === "compress" || tool === "redact") && (
+                {tool === "split" && (
+                  <>
+                    <OptionInput
+                      label="Page Ranges"
+                      value={ranges}
+                      onChange={setRanges}
+                      placeholder="1-3,5,8-10"
+                      hint="Comma-separated pages/ranges."
+                    />
+                    <div>
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Split Mode</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <ToggleChip
+                          active={splitMode === "single-file"}
+                          onClick={() => {
+                            setSplitMode("single-file");
+                            void updatePreference({ splitMode: "single-file" });
+                          }}
+                          label="One output"
+                        />
+                        <ToggleChip
+                          active={splitMode === "file-per-range"}
+                          onClick={() => {
+                            setSplitMode("file-per-range");
+                            void updatePreference({ splitMode: "file-per-range" });
+                          }}
+                          label="Per range"
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {tool === "rotate" && (
+                  <>
+                    <div>
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Rotate Degrees</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[90, 180, 270].map((value) => (
+                          <ToggleChip
+                            key={value}
+                            active={rotateDegrees === value}
+                            onClick={() => setRotateDegrees(value as 90 | 180 | 270)}
+                            label={`${value}°`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <OptionInput
+                      label="Rotate only ranges (optional)"
+                      value={rotateRanges}
+                      onChange={setRotateRanges}
+                      placeholder="Leave empty for all pages"
+                      hint="Example: 2-4, 8"
+                    />
+                  </>
+                )}
+
+                {(tool === "redact" || tool === "compress") && (
                   <div>
                     <div className="mb-2 flex items-center justify-between text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
                       <span>Render DPI</span>
@@ -367,59 +527,63 @@ function ToolWorkbench() {
                       className="w-full"
                     />
                     <p className="mt-1 text-xs text-slate-400">
-                      Lower DPI shrinks size more. Higher DPI keeps detail.
+                      Lower values reduce size more; higher values preserve more detail.
                     </p>
                   </div>
                 )}
 
-                {tool === "split" && (
+                {tool === "watermark" && (
                   <>
-                    <div>
-                      <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-                        Page Ranges
-                      </label>
-                      <input
-                        value={ranges}
-                        onChange={(event) => setRanges(event.target.value)}
-                        className="w-full rounded-xl border border-white/20 bg-slate-900/60 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/60"
-                        placeholder="1-3,5,8-10"
+                    <OptionInput
+                      label="Watermark Text"
+                      value={watermarkText}
+                      onChange={setWatermarkText}
+                      placeholder="CONFIDENTIAL"
+                    />
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <RangeControl
+                        label={`Opacity ${(watermarkOpacity * 100).toFixed(0)}%`}
+                        min={8}
+                        max={75}
+                        value={Math.round(watermarkOpacity * 100)}
+                        onChange={(value) => setWatermarkOpacity(value / 100)}
+                      />
+                      <RangeControl
+                        label={`Angle ${watermarkAngle}°`}
+                        min={-80}
+                        max={80}
+                        value={watermarkAngle}
+                        onChange={setWatermarkAngle}
+                      />
+                      <RangeControl
+                        label={`Size ${watermarkSize}`}
+                        min={18}
+                        max={120}
+                        value={watermarkSize}
+                        onChange={setWatermarkSize}
                       />
                     </div>
                     <div>
-                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">
-                        Split Output Mode
-                      </p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSplitMode("single-file");
-                            void updatePreference({ splitMode: "single-file" });
-                          }}
-                          className={`rounded-xl border px-3 py-2 text-xs font-bold uppercase tracking-[0.1em] ${
-                            splitMode === "single-file"
-                              ? "border-cyan-300/60 bg-cyan-300/15 text-cyan-100"
-                              : "border-white/20 bg-white/[0.02] text-slate-300"
-                          }`}
-                        >
-                          One output
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSplitMode("file-per-range");
-                            void updatePreference({ splitMode: "file-per-range" });
-                          }}
-                          className={`rounded-xl border px-3 py-2 text-xs font-bold uppercase tracking-[0.1em] ${
-                            splitMode === "file-per-range"
-                              ? "border-cyan-300/60 bg-cyan-300/15 text-cyan-100"
-                              : "border-white/20 bg-white/[0.02] text-slate-300"
-                          }`}
-                        >
-                          Per range
-                        </button>
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Scope</p>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        {(["all", "first", "last", "range"] as WatermarkScope[]).map((scope) => (
+                          <ToggleChip
+                            key={scope}
+                            active={watermarkScope === scope}
+                            onClick={() => setWatermarkScope(scope)}
+                            label={scope}
+                          />
+                        ))}
                       </div>
                     </div>
+                    {watermarkScope === "range" && (
+                      <OptionInput
+                        label="Watermark Ranges"
+                        value={watermarkRange}
+                        onChange={setWatermarkRange}
+                        placeholder="1,3-5"
+                      />
+                    )}
                   </>
                 )}
               </div>
@@ -471,6 +635,7 @@ function ToolWorkbench() {
               onPageSelect={setSelectedPage}
               onPages={setPreviewPages}
             />
+
             {tool === "sign" && (
               <SignaturePlacement
                 image={previewImage}
@@ -479,6 +644,7 @@ function ToolWorkbench() {
                 onChange={setPlacement}
               />
             )}
+
             {tool === "redact" && (
               <RedactionCanvas
                 image={previewImage}
@@ -489,12 +655,27 @@ function ToolWorkbench() {
           </div>
         </section>
 
-        <section className="flex justify-end">
+        <section className="flex justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              setFiles([]);
+              setPreviewPages([]);
+              setSelectedPage(0);
+              setRedactions({});
+              setPlacement(DEFAULT_SIGNATURE_PLACEMENT);
+              clearOutput();
+              setError(null);
+            }}
+            className="rounded-2xl border border-white/20 bg-white/[0.04] px-5 py-3 text-xs font-bold uppercase tracking-[0.12em] text-slate-200 transition hover:border-white/35"
+          >
+            Reset
+          </button>
           <button
             type="button"
             onClick={() => void handleProcess()}
             disabled={processing || files.length === 0}
-            className="rounded-2xl border border-cyan-300/45 bg-gradient-to-r from-cyan-500/80 to-blue-500/80 px-7 py-3 text-sm font-bold uppercase tracking-[0.12em] text-white shadow-lg shadow-cyan-900/35 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-2xl border border-cyan-300/45 bg-gradient-to-r from-cyan-500/80 to-blue-500/80 px-7 py-3 text-xs font-bold uppercase tracking-[0.12em] text-white shadow-lg shadow-cyan-900/35 transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {processing ? "Processing..." : "Process & Export"}
           </button>
@@ -511,6 +692,85 @@ function ToolWorkbench() {
       />
       <PaywallModal open={paywallOpen} onClose={() => setPaywallOpen(false)} />
     </AppShell>
+  );
+}
+
+function ToggleChip({
+  active,
+  onClick,
+  label
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-xl border px-3 py-2 text-xs font-bold uppercase tracking-[0.1em] ${
+        active
+          ? "border-cyan-300/60 bg-cyan-300/15 text-cyan-100"
+          : "border-white/20 bg-white/[0.02] text-slate-300 hover:border-white/35"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function OptionInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+  hint
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  hint?: string;
+}) {
+  return (
+    <div>
+      <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">{label}</label>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-xl border border-white/20 bg-slate-900/60 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/60"
+        placeholder={placeholder}
+      />
+      {hint && <p className="mt-1 text-xs text-slate-400">{hint}</p>}
+    </div>
+  );
+}
+
+function RangeControl({
+  label,
+  min,
+  max,
+  value,
+  onChange
+}: {
+  label: string;
+  min: number;
+  max: number;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div>
+      <div className="mb-1 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">{label}</div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="w-full"
+      />
+    </div>
   );
 }
 

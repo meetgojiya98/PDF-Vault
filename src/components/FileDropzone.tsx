@@ -7,13 +7,15 @@ type Props = {
   onFiles: (files: File[]) => void;
 };
 
+const isPdf = (file: File) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+
 export function FileDropzone({ multiple = false, onFiles }: Props) {
   const [isDragging, setIsDragging] = useState(false);
 
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsDragging(false);
-    const files = Array.from(event.dataTransfer.files).filter((file) => file.type === "application/pdf");
+    const files = Array.from(event.dataTransfer.files).filter(isPdf);
     if (files.length) {
       onFiles(files);
     }
@@ -31,7 +33,7 @@ export function FileDropzone({ multiple = false, onFiles }: Props) {
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
-      ? Array.from(event.target.files).filter((file) => file.type === "application/pdf")
+      ? Array.from(event.target.files).filter(isPdf)
       : [];
     if (files.length) {
       onFiles(files);
