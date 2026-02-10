@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts, degrees, rgb } from "pdf-lib";
+import { PDFDocument, PDFEmbeddedPage, StandardFonts, degrees, rgb } from "pdf-lib";
 import { renderPdfPages } from "./worker/workerClient";
 import type { Rect } from "../utils/coords";
 
@@ -350,6 +350,288 @@ export async function interleavePdfs(files: File[]) {
   return output.save();
 }
 
+export type HeaderFooterOptions = {
+  headerText: string;
+  footerText: string;
+  includeDate: boolean;
+  includePageNumbers: boolean;
+  fontSize: number;
+  opacity: number;
+  ranges?: PageRange[];
+};
+
+export async function addHeaderFooterPdf(file: File, options: HeaderFooterOptions) {
+  const bytes = await file.arrayBuffer();
+  const pdf = await PDFDocument.load(bytes);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  if (!pdf.getPageCount()) {
+    throw new Error("PDF has no pages.");
+  }
+  const pageIndexes = resolvePageIndexes(pdf, options.ranges);
+  const selected = new Set(pageIndexes);
+  const fontSize = clamp(options.fontSize, 8, 40);
+  const opacity = clamp(options.opacity, 0.1, 1);
+  const dateStamp = new Date().toLocaleDateString();
+  const totalPages = pdf.getPageCount();
+
+  pdf.getPages().forEach((page, pageIndex) => {
+    if (!selected.has(pageIndex)) return;
+    const width = page.getWidth();
+    const height = page.getHeight();
+    const headerParts = [options.headerText.trim()].filter(Boolean);
+    const footerParts = [options.footerText.trim()].filter(Boolean);
+
+    if (options.includeDate) {
+      headerParts.push(dateStamp);
+    }
+    if (options.includePageNumbers) {
+      footerParts.push(`Page ${pageIndex + 1} of ${totalPages}`);
+    }
+
+    const headerLine = headerParts.join(" | ").trim();
+    const footerLine = footerParts.join(" | ").trim();
+    const margin = Math.max(14, Math.round(fontSize * 0.9));
+
+    if (headerLine) {
+      const textWidth = font.widthOfTextAtSize(headerLine, fontSize);
+      page.drawText(headerLine, {
+        x: Math.max(8, (width - textWidth) / 2),
+        y: height - margin - font.heightAtSize(fontSize),
+        size: fontSize,
+        font,
+        color: rgb(0.2, 0.24, 0.3),
+        opacity
+      });
+    }
+
+    if (footerLine) {
+      const textWidth = font.widthOfTextAtSize(footerLine, fontSize);
+      page.drawText(footerLine, {
+        x: Math.max(8, (width - textWidth) / 2),
+        y: margin,
+        size: fontSize,
+        font,
+        color: rgb(0.2, 0.24, 0.3),
+        opacity
+      });
+    }
+  });
+
+  return pdf.save();
+}
+
+export type ResizeOptions = {
+  preset: "a4" | "letter" | "legal";
+  orientation: "preserve" | "portrait" | "landscape";
+  mode: "fit" | "stretch";
+  ranges?: PageRange[];
+};
+
+export async function resizePagesPdf(file: File, options: ResizeOptions) {
+  const bytes = await file.arrayBuffer();
+  const source = await PDFDocument.load(bytes);
+  if (!source.getPageCount()) {
+    throw new Error("PDF has no pages.");
+  }
+  const output = await PDFDocument.create();
+  const selected = new Set(resolvePageIndexes(source, options.ranges));
+  const baseSize = getPaperDimensions(options.preset);
+
+  for (const pageIndex of source.getPageIndices()) {
+    const sourcePage = source.getPage(pageIndex);
+    const sourceWidth = sourcePage.getWidth();
+    const sourceHeight = sourcePage.getHeight();
+
+    if (!selected.has(pageIndex)) {
+      const copied = await output.copyPages(source, [pageIndex]);
+      copied.forEach((page) => output.addPage(page));
+      continue;
+    }
+
+    let targetWidth = baseSize.width;
+    let targetHeight = baseSize.height;
+
+    if (options.orientation === "preserve") {
+      const isLandscape = sourceWidth > sourceHeight;
+      if (isLandscape && targetHeight > targetWidth) {
+        [targetWidth, targetHeight] = [targetHeight, targetWidth];
+      }
+      if (!isLandscape && targetWidth > targetHeight) {
+        [targetWidth, targetHeight] = [targetHeight, targetWidth];
+      }
+    }
+    if (options.orientation === "portrait" && targetWidth > targetHeight) {
+      [targetWidth, targetHeight] = [targetHeight, targetWidth];
+    }
+    if (options.orientation === "landscape" && targetHeight > targetWidth) {
+      [targetWidth, targetHeight] = [targetHeight, targetWidth];
+    }
+
+    const embedded = await output.embedPage(sourcePage);
+    const targetPage = output.addPage([targetWidth, targetHeight]);
+
+    if (options.mode === "stretch") {
+      targetPage.drawPage(embedded, {
+        x: 0,
+        y: 0,
+        width: targetWidth,
+        height: targetHeight
+      });
+      continue;
+    }
+
+    const ratio = Math.min(targetWidth / sourceWidth, targetHeight / sourceHeight);
+    const drawWidth = sourceWidth * ratio;
+    const drawHeight = sourceHeight * ratio;
+    targetPage.drawPage(embedded, {
+      x: (targetWidth - drawWidth) / 2,
+      y: (targetHeight - drawHeight) / 2,
+      width: drawWidth,
+      height: drawHeight
+    });
+  }
+
+  return output.save();
+}
+
+export type BlankInsertOptions = {
+  count: number;
+  mode: "start" | "end" | "before-each" | "after-each" | "every-n";
+  interval: number;
+  size: "match-source" | "a4" | "letter" | "legal";
+};
+
+export async function insertBlankPagesPdf(file: File, options: BlankInsertOptions) {
+  const bytes = await file.arrayBuffer();
+  const source = await PDFDocument.load(bytes);
+  if (!source.getPageCount()) {
+    throw new Error("PDF has no pages.");
+  }
+  const output = await PDFDocument.create();
+  const count = clamp(Math.floor(options.count), 1, 20);
+  const interval = clamp(Math.floor(options.interval), 1, 200);
+
+  const getBlankSize = (pageIndex: number) => {
+    if (options.size === "match-source") {
+      const page = source.getPage(Math.min(pageIndex, Math.max(0, source.getPageCount() - 1)));
+      return { width: page.getWidth(), height: page.getHeight() };
+    }
+    return getPaperDimensions(options.size);
+  };
+
+  const addBlanks = (pageIndexHint: number) => {
+    const size = getBlankSize(pageIndexHint);
+    for (let i = 0; i < count; i += 1) {
+      output.addPage([size.width, size.height]);
+    }
+  };
+
+  if (options.mode === "start") {
+    addBlanks(0);
+  }
+
+  for (const pageIndex of source.getPageIndices()) {
+    if (options.mode === "before-each") {
+      addBlanks(pageIndex);
+    }
+
+    const copied = await output.copyPages(source, [pageIndex]);
+    copied.forEach((page) => output.addPage(page));
+
+    if (options.mode === "after-each") {
+      addBlanks(pageIndex);
+    }
+
+    if (options.mode === "every-n" && (pageIndex + 1) % interval === 0 && pageIndex < source.getPageCount() - 1) {
+      addBlanks(pageIndex);
+    }
+  }
+
+  if (options.mode === "end") {
+    addBlanks(Math.max(0, source.getPageCount() - 1));
+  }
+
+  return output.save();
+}
+
+export async function chunkSplitPdf(file: File, pagesPerChunk: number) {
+  const bytes = await file.arrayBuffer();
+  const source = await PDFDocument.load(bytes);
+  if (!source.getPageCount()) {
+    throw new Error("PDF has no pages.");
+  }
+  const chunkSize = clamp(Math.floor(pagesPerChunk), 1, 200);
+  const outputs: Uint8Array[] = [];
+
+  for (let start = 0; start < source.getPageCount(); start += chunkSize) {
+    const end = Math.min(source.getPageCount(), start + chunkSize);
+    const indices = Array.from({ length: end - start }, (_, index) => start + index);
+    const output = await PDFDocument.create();
+    const copied = await output.copyPages(source, indices);
+    copied.forEach((page) => output.addPage(page));
+    outputs.push(await output.save());
+  }
+
+  return outputs;
+}
+
+export type OverlayOptions = {
+  mode: "repeat-first" | "match-pages";
+  opacity: number;
+  scalePercent: number;
+};
+
+export async function overlayPdfs(baseFile: File, overlayFile: File, options: OverlayOptions) {
+  const baseBytes = await baseFile.arrayBuffer();
+  const overlayBytes = await overlayFile.arrayBuffer();
+  const base = await PDFDocument.load(baseBytes);
+  const overlay = await PDFDocument.load(overlayBytes);
+  if (!base.getPageCount()) {
+    throw new Error("Base PDF has no pages.");
+  }
+  if (!overlay.getPageCount()) {
+    throw new Error("Overlay PDF has no pages.");
+  }
+
+  const embeddedCache = new Map<number, PDFEmbeddedPage>();
+  const opacity = clamp(options.opacity, 0.05, 1);
+  const scalePercent = clamp(options.scalePercent, 10, 200) / 100;
+  const overlayPageCount = overlay.getPageCount();
+
+  for (const pageIndex of base.getPageIndices()) {
+    if (options.mode === "match-pages" && pageIndex >= overlayPageCount) {
+      continue;
+    }
+
+    const overlayIndex = options.mode === "repeat-first" ? 0 : pageIndex;
+    let embedded = embeddedCache.get(overlayIndex);
+    if (!embedded) {
+      const [overlayPage] = await base.embedPdf(overlayBytes, [overlayIndex]);
+      embedded = overlayPage;
+      embeddedCache.set(overlayIndex, embedded);
+    }
+
+    const basePage = base.getPage(pageIndex);
+    const baseWidth = basePage.getWidth();
+    const baseHeight = basePage.getHeight();
+    const widthScale = (baseWidth * scalePercent) / embedded.width;
+    const heightScale = (baseHeight * scalePercent) / embedded.height;
+    const factor = Math.min(widthScale, heightScale);
+    const drawWidth = embedded.width * factor;
+    const drawHeight = embedded.height * factor;
+
+    basePage.drawPage(embedded, {
+      x: (baseWidth - drawWidth) / 2,
+      y: (baseHeight - drawHeight) / 2,
+      width: drawWidth,
+      height: drawHeight,
+      opacity
+    });
+  }
+
+  return base.save();
+}
+
 export type MarginOptions = {
   top: number;
   right: number;
@@ -585,6 +867,12 @@ function computePosition(
   })();
 
   return { x: horizontal, y: vertical };
+}
+
+function getPaperDimensions(preset: "a4" | "letter" | "legal") {
+  if (preset === "a4") return { width: 595.28, height: 841.89 };
+  if (preset === "legal") return { width: 612, height: 1008 };
+  return { width: 612, height: 792 };
 }
 
 function clamp(value: number, min: number, max: number) {

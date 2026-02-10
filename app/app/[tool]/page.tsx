@@ -25,17 +25,22 @@ import {
 } from "../../../src/storage/indexedDb";
 import {
   addMarginsPdf,
+  addHeaderFooterPdf,
   addPageNumbers,
+  chunkSplitPdf,
   compressPdf,
   cropPdf,
   deletePagesPdf,
   duplicatePagesPdf,
   grayscalePdf,
   interleavePdfs,
+  insertBlankPagesPdf,
   mergePdfs,
+  overlayPdfs,
   parsePageRanges,
   redactPdf,
   reorderPagesPdf,
+  resizePagesPdf,
   reversePagesPdf,
   rotatePdf,
   splitPdf,
@@ -49,6 +54,11 @@ import { loadSignature, saveSignature } from "../../../src/storage/indexedDb";
 type SplitMode = "single-file" | "file-per-range";
 type WatermarkScope = "all" | "first" | "last" | "range";
 type DeleteMode = "ranges" | "odd" | "even";
+type PaperPreset = "a4" | "letter" | "legal";
+type ResizeOrientation = "preserve" | "portrait" | "landscape";
+type ResizeMode = "fit" | "stretch";
+type BlankMode = "start" | "end" | "before-each" | "after-each" | "every-n";
+type OverlayMode = "repeat-first" | "match-pages";
 
 const DEFAULT_SIGNATURE_PLACEMENT: Rect = {
   x: 0.12,
@@ -122,6 +132,30 @@ function ToolWorkbench() {
   const [deleteRanges, setDeleteRanges] = useState("1");
 
   const [grayscaleQuality, setGrayscaleQuality] = useState(0.68);
+
+  const [headerText, setHeaderText] = useState("");
+  const [footerText, setFooterText] = useState("");
+  const [headerIncludeDate, setHeaderIncludeDate] = useState(true);
+  const [headerIncludePageNo, setHeaderIncludePageNo] = useState(true);
+  const [headerSize, setHeaderSize] = useState(11);
+  const [headerOpacity, setHeaderOpacity] = useState(0.9);
+  const [headerRanges, setHeaderRanges] = useState("");
+
+  const [resizePreset, setResizePreset] = useState<PaperPreset>("a4");
+  const [resizeOrientation, setResizeOrientation] = useState<ResizeOrientation>("preserve");
+  const [resizeMode, setResizeMode] = useState<ResizeMode>("fit");
+  const [resizeRanges, setResizeRanges] = useState("");
+
+  const [blankMode, setBlankMode] = useState<BlankMode>("end");
+  const [blankCount, setBlankCount] = useState(1);
+  const [blankInterval, setBlankInterval] = useState(5);
+  const [blankSize, setBlankSize] = useState<"match-source" | PaperPreset>("match-source");
+
+  const [chunkSize, setChunkSize] = useState(10);
+
+  const [overlayMode, setOverlayMode] = useState<OverlayMode>("repeat-first");
+  const [overlayOpacity, setOverlayOpacity] = useState(0.35);
+  const [overlayScale, setOverlayScale] = useState(100);
 
   const [outputPrefix, setOutputPrefix] = useState("pdf-vault");
   const [output, setOutput] = useState<ExportInfo | null>(null);
@@ -281,6 +315,18 @@ function ToolWorkbench() {
       return [toOutputFile(data, buildName("interleaved"))];
     }
 
+    if (tool === "overlay") {
+      if (files.length !== 2) {
+        throw new Error("Overlay requires exactly two PDFs (base + overlay).");
+      }
+      const data = await overlayPdfs(files[0], files[1], {
+        mode: overlayMode,
+        opacity: overlayOpacity,
+        scalePercent: overlayScale
+      });
+      return [toOutputFile(data, buildName("overlayed"))];
+    }
+
     if (tool === "split") {
       if (!primaryFile) throw new Error("Upload a PDF to split.");
       const parsed = parsePageRanges(ranges);
@@ -288,6 +334,12 @@ function ToolWorkbench() {
       return outputs.map((data, index) =>
         toOutputFile(data, splitMode === "file-per-range" ? buildName(`split-part-${index + 1}`) : buildName("split"))
       );
+    }
+
+    if (tool === "chunksplit") {
+      if (!primaryFile) throw new Error("Upload a PDF to split in chunks.");
+      const outputs = await chunkSplitPdf(primaryFile, chunkSize);
+      return outputs.map((data, index) => toOutputFile(data, buildName(`chunk-${index + 1}`)));
     }
 
     if (tool === "rotate") {
@@ -306,11 +358,33 @@ function ToolWorkbench() {
       return [toOutputFile(data, buildName("reordered"))];
     }
 
+    if (tool === "resize") {
+      if (!primaryFile) throw new Error("Upload a PDF to resize.");
+      const data = await resizePagesPdf(primaryFile, {
+        preset: resizePreset,
+        orientation: resizeOrientation,
+        mode: resizeMode,
+        ranges: getOptionalRanges(resizeRanges)
+      });
+      return [toOutputFile(data, buildName("resized"))];
+    }
+
     if (tool === "duplicate") {
       if (!primaryFile) throw new Error("Upload a PDF to duplicate pages.");
       const parsed = parsePageRanges(duplicateRanges);
       const data = await duplicatePagesPdf(primaryFile, parsed, duplicateCount);
       return [toOutputFile(data, buildName("duplicated"))];
+    }
+
+    if (tool === "blank") {
+      if (!primaryFile) throw new Error("Upload a PDF to insert blank pages.");
+      const data = await insertBlankPagesPdf(primaryFile, {
+        mode: blankMode,
+        count: blankCount,
+        interval: blankInterval,
+        size: blankSize
+      });
+      return [toOutputFile(data, buildName("with-blanks"))];
     }
 
     if (tool === "reverse") {
@@ -405,6 +479,23 @@ function ToolWorkbench() {
       return [toOutputFile(data, buildName("watermarked"))];
     }
 
+    if (tool === "header") {
+      if (!primaryFile) throw new Error("Upload a PDF to add header/footer.");
+      if (!headerText.trim() && !footerText.trim() && !headerIncludeDate && !headerIncludePageNo) {
+        throw new Error("Provide header/footer text or enable date/page number.");
+      }
+      const data = await addHeaderFooterPdf(primaryFile, {
+        headerText,
+        footerText,
+        includeDate: headerIncludeDate,
+        includePageNumbers: headerIncludePageNo,
+        fontSize: headerSize,
+        opacity: headerOpacity,
+        ranges: getOptionalRanges(headerRanges)
+      });
+      return [toOutputFile(data, buildName("header-footer"))];
+    }
+
     if (tool === "number") {
       if (!primaryFile) throw new Error("Upload a PDF to add page numbers.");
       const data = await addPageNumbers(primaryFile, {
@@ -450,11 +541,23 @@ function ToolWorkbench() {
     previewPages,
     primaryFile,
     ranges,
+    chunkSize,
     rotateDegrees,
     rotateRanges,
     reorderSpec,
+    resizePreset,
+    resizeOrientation,
+    resizeMode,
+    resizeRanges,
     duplicateRanges,
     duplicateCount,
+    blankMode,
+    blankCount,
+    blankInterval,
+    blankSize,
+    overlayMode,
+    overlayOpacity,
+    overlayScale,
     selectedPage,
     signature,
     splitMode,
@@ -487,6 +590,13 @@ function ToolWorkbench() {
     numberOpacity,
     numberRanges,
     grayscaleQuality,
+    headerText,
+    footerText,
+    headerIncludeDate,
+    headerIncludePageNo,
+    headerSize,
+    headerOpacity,
+    headerRanges,
     metaTitle,
     metaAuthor,
     metaSubject,
@@ -614,7 +724,10 @@ function ToolWorkbench() {
 
         <section className="grid gap-5 xl:grid-cols-[1fr_1.35fr]">
           <div className="space-y-5">
-            <FileDropzone multiple={tool === "merge" || tool === "interleave"} onFiles={handleFiles} />
+            <FileDropzone
+              multiple={tool === "merge" || tool === "interleave" || tool === "overlay"}
+              onFiles={handleFiles}
+            />
 
             <section className="rounded-3xl border border-white/15 bg-white/[0.03] p-5">
               <div className="mb-4 flex items-center justify-between">
@@ -672,6 +785,21 @@ function ToolWorkbench() {
                   </>
                 )}
 
+                {tool === "chunksplit" && (
+                  <>
+                    <RangeControl
+                      label={`Pages per chunk ${chunkSize}`}
+                      min={1}
+                      max={200}
+                      value={chunkSize}
+                      onChange={setChunkSize}
+                    />
+                    <p className="text-xs text-slate-400">
+                      Creates multiple output files of fixed page size chunks.
+                    </p>
+                  </>
+                )}
+
                 {tool === "rotate" && (
                   <>
                     <div>
@@ -693,6 +821,56 @@ function ToolWorkbench() {
                       onChange={setRotateRanges}
                       placeholder="Leave empty for all pages"
                       hint="Example: 2-4, 8"
+                    />
+                  </>
+                )}
+
+                {tool === "resize" && (
+                  <>
+                    <div>
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Paper Size</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        {(["a4", "letter", "legal"] as PaperPreset[]).map((preset) => (
+                          <ToggleChip
+                            key={preset}
+                            active={resizePreset === preset}
+                            onClick={() => setResizePreset(preset)}
+                            label={preset}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Orientation</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        {(["preserve", "portrait", "landscape"] as ResizeOrientation[]).map((orientation) => (
+                          <ToggleChip
+                            key={orientation}
+                            active={resizeOrientation === orientation}
+                            onClick={() => setResizeOrientation(orientation)}
+                            label={orientation}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Scaling</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {(["fit", "stretch"] as ResizeMode[]).map((mode) => (
+                          <ToggleChip
+                            key={mode}
+                            active={resizeMode === mode}
+                            onClick={() => setResizeMode(mode)}
+                            label={mode}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <OptionInput
+                      label="Resize ranges (optional)"
+                      value={resizeRanges}
+                      onChange={setResizeRanges}
+                      placeholder="Leave empty for all pages"
                     />
                   </>
                 )}
@@ -726,10 +904,110 @@ function ToolWorkbench() {
                   </>
                 )}
 
+                {tool === "blank" && (
+                  <>
+                    <div>
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Insert Mode</p>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {(
+                          [
+                            "start",
+                            "end",
+                            "before-each",
+                            "after-each",
+                            "every-n"
+                          ] as BlankMode[]
+                        ).map((mode) => (
+                          <ToggleChip
+                            key={mode}
+                            active={blankMode === mode}
+                            onClick={() => setBlankMode(mode)}
+                            label={mode.replace("-", " ")}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <RangeControl
+                        label={`Blanks ${blankCount}`}
+                        min={1}
+                        max={20}
+                        value={blankCount}
+                        onChange={setBlankCount}
+                      />
+                      {blankMode === "every-n" ? (
+                        <RangeControl
+                          label={`Interval ${blankInterval}`}
+                          min={1}
+                          max={200}
+                          value={blankInterval}
+                          onChange={setBlankInterval}
+                        />
+                      ) : (
+                        <div className="rounded-xl border border-white/10 bg-slate-900/35 px-3 py-2 text-xs text-slate-400">
+                          Interval is used only for "every n" mode.
+                        </div>
+                      )}
+                      <div>
+                        <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Blank Size</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {(["match-source", "a4", "letter", "legal"] as const).map((size) => (
+                            <ToggleChip
+                              key={size}
+                              active={blankSize === size}
+                              onClick={() => setBlankSize(size)}
+                              label={size.replace("-", " ")}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+
                 {tool === "interleave" && (
                   <div className="rounded-2xl border border-violet-300/30 bg-violet-300/10 p-3 text-xs text-violet-100">
                     Pages are alternated by file order (A1, B1, C1, A2...). Reorder files below to control sequence.
                   </div>
+                )}
+
+                {tool === "overlay" && (
+                  <>
+                    <div className="rounded-2xl border border-indigo-300/30 bg-indigo-300/10 p-3 text-xs text-indigo-100">
+                      Upload exactly two files. First is the base document, second is the overlay PDF.
+                    </div>
+                    <div>
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Overlay Mode</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <ToggleChip
+                          active={overlayMode === "repeat-first"}
+                          onClick={() => setOverlayMode("repeat-first")}
+                          label="repeat first"
+                        />
+                        <ToggleChip
+                          active={overlayMode === "match-pages"}
+                          onClick={() => setOverlayMode("match-pages")}
+                          label="match pages"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <RangeControl
+                        label={`Overlay Opacity ${(overlayOpacity * 100).toFixed(0)}%`}
+                        min={5}
+                        max={100}
+                        value={Math.round(overlayOpacity * 100)}
+                        onChange={(value) => setOverlayOpacity(value / 100)}
+                      />
+                      <RangeControl
+                        label={`Overlay Scale ${overlayScale}%`}
+                        min={10}
+                        max={200}
+                        value={overlayScale}
+                        onChange={setOverlayScale}
+                      />
+                    </div>
+                  </>
                 )}
 
                 {tool === "reverse" && (
@@ -946,6 +1224,57 @@ function ToolWorkbench() {
                   </>
                 )}
 
+                {tool === "header" && (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <OptionInput
+                        label="Header Text"
+                        value={headerText}
+                        onChange={setHeaderText}
+                        placeholder="Project Phoenix - Draft"
+                      />
+                      <OptionInput
+                        label="Footer Text"
+                        value={footerText}
+                        onChange={setFooterText}
+                        placeholder="Internal Use Only"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      <ToggleChip
+                        active={headerIncludeDate}
+                        onClick={() => setHeaderIncludeDate((value) => !value)}
+                        label={headerIncludeDate ? "date on" : "date off"}
+                      />
+                      <ToggleChip
+                        active={headerIncludePageNo}
+                        onClick={() => setHeaderIncludePageNo((value) => !value)}
+                        label={headerIncludePageNo ? "pages on" : "pages off"}
+                      />
+                      <RangeControl
+                        label={`Size ${headerSize}`}
+                        min={8}
+                        max={40}
+                        value={headerSize}
+                        onChange={setHeaderSize}
+                      />
+                      <RangeControl
+                        label={`Opacity ${(headerOpacity * 100).toFixed(0)}%`}
+                        min={10}
+                        max={100}
+                        value={Math.round(headerOpacity * 100)}
+                        onChange={(value) => setHeaderOpacity(value / 100)}
+                      />
+                    </div>
+                    <OptionInput
+                      label="Apply to ranges (optional)"
+                      value={headerRanges}
+                      onChange={setHeaderRanges}
+                      placeholder="Leave empty for all pages"
+                    />
+                  </>
+                )}
+
                 {tool === "number" && (
                   <>
                     <div className="grid gap-3 sm:grid-cols-2">
@@ -1039,10 +1368,14 @@ function ToolWorkbench() {
               </div>
             </section>
 
-            {(tool === "merge" || tool === "interleave") && files.length > 0 && (
+            {(tool === "merge" || tool === "interleave" || tool === "overlay") && files.length > 0 && (
               <section className="rounded-3xl border border-white/15 bg-white/[0.03] p-5">
                 <h2 className="mb-3 text-lg font-bold text-white">
-                  {tool === "interleave" ? "Interleave File Order" : "File Order"}
+                  {tool === "interleave"
+                    ? "Interleave File Order"
+                    : tool === "overlay"
+                    ? "Overlay File Order (Base first, Overlay second)"
+                    : "File Order"}
                 </h2>
                 <div className="space-y-2">
                   {files.map((file, index) => (
@@ -1118,9 +1451,21 @@ function ToolWorkbench() {
               setPlacement(DEFAULT_SIGNATURE_PLACEMENT);
               setRotateDegrees(90);
               setRotateRanges("");
+              setChunkSize(10);
               setReorderSpec("");
+              setResizePreset("a4");
+              setResizeOrientation("preserve");
+              setResizeMode("fit");
+              setResizeRanges("");
               setDuplicateRanges("1");
               setDuplicateCount(1);
+              setBlankMode("end");
+              setBlankCount(1);
+              setBlankInterval(5);
+              setBlankSize("match-source");
+              setOverlayMode("repeat-first");
+              setOverlayOpacity(0.35);
+              setOverlayScale(100);
               setDeleteMode("ranges");
               setDeleteRanges("1");
               setCropTop(20);
@@ -1134,6 +1479,13 @@ function ToolWorkbench() {
               setMarginLeft(24);
               setMarginRanges("");
               setGrayscaleQuality(0.68);
+              setHeaderText("");
+              setFooterText("");
+              setHeaderIncludeDate(true);
+              setHeaderIncludePageNo(true);
+              setHeaderSize(11);
+              setHeaderOpacity(0.9);
+              setHeaderRanges("");
               setWatermarkText("CONFIDENTIAL");
               setWatermarkOpacity(0.16);
               setWatermarkAngle(-35);

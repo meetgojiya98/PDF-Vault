@@ -263,6 +263,76 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     keywords: ["black and white", "mono", "archive"],
     outputs: ["grayscale PDF"],
     idealFor: ["Archiving", "Low-ink prints", "Monochrome exports"]
+  },
+  {
+    slug: "header",
+    name: "Header / Footer",
+    shortDescription: "Add structured header and footer text.",
+    longDescription: "Apply configurable header/footer text with page numbers, date stamp, opacity, and page-range targeting.",
+    icon: "🧭",
+    category: "review",
+    color: "from-teal-500/20 to-cyan-500/20",
+    borderColor: "border-teal-400/35",
+    gradient: "from-teal-300 to-cyan-300",
+    keywords: ["header", "footer", "date", "page number"],
+    outputs: ["annotated PDF"],
+    idealFor: ["Reports", "Internal memos", "Client drafts"]
+  },
+  {
+    slug: "resize",
+    name: "Resize Pages",
+    shortDescription: "Convert pages to A4, Letter, or Legal.",
+    longDescription: "Resize pages to standard paper sizes with fit/stretch controls and optional orientation rules.",
+    icon: "📐",
+    category: "organize",
+    color: "from-sky-500/20 to-blue-500/20",
+    borderColor: "border-sky-400/35",
+    gradient: "from-sky-300 to-blue-300",
+    keywords: ["a4", "letter", "legal", "normalize size"],
+    outputs: ["resized PDF"],
+    idealFor: ["Printing", "Submission portals", "Template standardization"]
+  },
+  {
+    slug: "blank",
+    name: "Insert Blank Pages",
+    shortDescription: "Insert blanks at strategic positions.",
+    longDescription: "Add one or more blank pages at start/end, before/after each page, or at fixed intervals.",
+    icon: "📄",
+    category: "organize",
+    color: "from-amber-500/20 to-lime-500/20",
+    borderColor: "border-amber-400/35",
+    gradient: "from-amber-300 to-lime-300",
+    keywords: ["blank", "separator", "booklet", "padding pages"],
+    outputs: ["expanded PDF"],
+    idealFor: ["Booklet prep", "Section separators", "Print collation"]
+  },
+  {
+    slug: "chunksplit",
+    name: "Chunk Split",
+    shortDescription: "Split into equal page chunks.",
+    longDescription: "Automatically split long PDFs into multiple files by pages-per-chunk.",
+    icon: "🧰",
+    category: "organize",
+    color: "from-fuchsia-500/20 to-purple-500/20",
+    borderColor: "border-fuchsia-400/35",
+    gradient: "from-fuchsia-300 to-purple-300",
+    keywords: ["batch split", "chunks", "pagination"],
+    outputs: ["multi-file split"],
+    idealFor: ["Bulk uploads", "Chapter exports", "Mailing packets"]
+  },
+  {
+    slug: "overlay",
+    name: "Overlay PDFs",
+    shortDescription: "Overlay one PDF over another.",
+    longDescription: "Place an overlay PDF on top of base pages with opacity, scaling, and page-matching controls.",
+    icon: "🪟",
+    category: "review",
+    color: "from-indigo-500/20 to-violet-500/20",
+    borderColor: "border-indigo-400/35",
+    gradient: "from-indigo-300 to-violet-300",
+    keywords: ["overlay", "letterhead", "stamp", "template"],
+    outputs: ["overlayed PDF"],
+    idealFor: ["Letterheads", "Approval stamps", "Branded templates"]
   }
 ];
 
@@ -322,6 +392,20 @@ export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
     description: "Interleave scanned files then create grayscale archive output.",
     steps: ["interleave", "grayscale", "compress"],
     badge: "Archive"
+  },
+  {
+    id: "office-pack",
+    name: "Office Pack",
+    description: "Resize for paper standard, add header/footer, then chunk split for distribution.",
+    steps: ["resize", "header", "chunksplit"],
+    badge: "Office"
+  },
+  {
+    id: "print-layout",
+    name: "Print Layout",
+    description: "Insert separators, apply margins, and overlay house template.",
+    steps: ["blank", "margin", "overlay"],
+    badge: "Layout"
   }
 ];
 

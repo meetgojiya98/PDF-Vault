@@ -12,8 +12,20 @@
 ### 🛠️ PDF Tools
 - **Merge PDFs** - Combine multiple documents with custom ordering
 - **Split & Extract** - Extract specific page ranges into new files
+- **Chunk Split** - Split long PDFs into equal page batches
+- **Overlay PDFs** - Stamp one PDF on top of another (letterhead/template)
+- **Resize Pages** - Normalize pages to A4, Letter, or Legal
+- **Insert Blank Pages** - Add separators at start, end, per page, or intervals
 - **Digital Signature** - Add handwritten signatures to documents
 - **Safe Redaction** - Permanently remove sensitive information
+- **Header / Footer** - Add document labels, dates, and page context
+- **Page Numbers** - Add configurable page numbering styles
+- **Metadata Editor** - Edit title, author, subject, and keywords
+- **Rotate / Reorder / Reverse** - Correct orientation and page sequence
+- **Duplicate / Delete** - Repeat or remove pages in bulk
+- **Crop / Margins** - Adjust printable area and page framing
+- **Watermark** - Add DRAFT/CONFIDENTIAL overlays with opacity controls
+- **Grayscale** - Convert to monochrome output for archiving or low-ink printing
 - **Strong Compression** - Reduce file size with advanced bitmap compression
 - **Batch Processing** - Handle multiple files simultaneously
 
@@ -148,6 +160,16 @@ Copy the contents to your `.env.local` file.
 ### Split & Extract
 1. Upload a PDF
 2. Enter page ranges (e.g., `1-3,5,7-9`)
+3. Process and export
+
+### Chunk Split
+1. Upload a PDF
+2. Set pages per chunk (e.g., `10`)
+3. Process and download multiple chunk files
+
+### Overlay PDFs
+1. Upload exactly 2 PDFs (base first, overlay second)
+2. Pick overlay mode, opacity, and scale
 3. Process and export
 
 ### Digital Signature

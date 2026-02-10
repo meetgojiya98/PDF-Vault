@@ -30,7 +30,12 @@ export type ToolSlug =
   | "duplicate"
   | "interleave"
   | "margin"
-  | "grayscale";
+  | "grayscale"
+  | "header"
+  | "resize"
+  | "blank"
+  | "chunksplit"
+  | "overlay";
 
 export type RunHistoryItem = {
   id: string;
@@ -210,7 +215,12 @@ function dedupeTools(tools: ToolSlug[]) {
     "duplicate",
     "interleave",
     "margin",
-    "grayscale"
+    "grayscale",
+    "header",
+    "resize",
+    "blank",
+    "chunksplit",
+    "overlay"
   ]);
   const seen = new Set<ToolSlug>();
   const output: ToolSlug[] = [];

@@ -4,7 +4,7 @@ import type { Metadata, Viewport } from "next";
 export const metadata: Metadata = {
   title: "PDF Vault - Browser PDF Workspace",
   description:
-    "A feature-rich browser PDF workspace to merge, split, reorder, duplicate, interleave, margin-adjust, grayscale, crop, delete, reverse, number, watermark, sign, redact, and compress files with local-only processing.",
+    "A feature-rich browser PDF workspace to merge, split, chunk-split, overlay, resize, insert blanks, add header/footer, reorder, duplicate, interleave, margin-adjust, grayscale, crop, delete, reverse, number, watermark, sign, redact, and compress files with local-only processing.",
   keywords: [
     "PDF tools",
     "offline PDF",
@@ -16,6 +16,11 @@ export const metadata: Metadata = {
     "interleave PDF",
     "add PDF margins",
     "grayscale PDF",
+    "resize PDF pages",
+    "insert blank pages PDF",
+    "add header footer PDF",
+    "overlay PDFs",
+    "split PDF by chunks",
     "crop PDF",
     "delete PDF pages",
     "reverse PDF",
