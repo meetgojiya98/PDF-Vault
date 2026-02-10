@@ -171,7 +171,7 @@ export function PdfPreview({ file, onLoad, onPageSelect, selectedIndex = 0, onPa
             className={`group relative overflow-hidden rounded-xl border-2 transition-all duration-300 hover:shadow-2xl ${
               selectedIndex === page.index
                 ? "border-cyan-400 shadow-xl shadow-cyan-500/30 scale-105 ring-2 ring-cyan-400/20"
-                : "border-slate-700/50 hover:border-cyan-500/50 hover:scale-102"
+                : "border-slate-700/50 hover:border-cyan-500/50 hover:scale-[1.02]"
             }`}
             style={{ 
               animationDelay: `${idx * 50}ms`,

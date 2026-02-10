@@ -16,25 +16,59 @@ export async function mergePdfs(files: File[]) {
 export type PageRange = { start: number; end: number };
 
 export function parsePageRanges(input: string): PageRange[] {
-  return input
+  const segments = input
     .split(",")
     .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => {
-      const [start, end] = part.split("-").map((value) => parseInt(value.trim(), 10));
-      if (!end) {
-        return { start: start - 1, end: start - 1 };
-      }
-      return { start: start - 1, end: end - 1 };
-    });
+    .filter(Boolean);
+
+  if (!segments.length) {
+    throw new Error("Enter at least one page range.");
+  }
+
+  return segments.map((segment) => {
+    const parts = segment.split("-").map((value) => value.trim());
+    if (parts.length > 2) {
+      throw new Error(`Invalid range "${segment}". Use numbers like 1 or 2-5.`);
+    }
+    const [startRaw, endRaw] = parts;
+    const start = Number.parseInt(startRaw, 10);
+    const hasEnd = typeof endRaw === "string" && endRaw.length > 0;
+    const end = hasEnd ? Number.parseInt(endRaw, 10) : start;
+
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < 1) {
+      throw new Error(`Invalid range "${segment}". Use numbers like 1 or 2-5.`);
+    }
+    if (end < start) {
+      throw new Error(`Invalid range "${segment}". End page must be greater than start page.`);
+    }
+
+    return { start: start - 1, end: end - 1 };
+  });
 }
 
-export async function splitPdf(file: File, ranges: PageRange[]) {
+export async function splitPdf(
+  file: File,
+  ranges: PageRange[],
+  mode: "single-file" | "file-per-range" = "single-file"
+) {
   const bytes = await file.arrayBuffer();
   const source = await PDFDocument.load(bytes);
+  const pageCount = source.getPageCount();
+  const normalizedRanges = normalizeRanges(ranges, pageCount);
   const outputs: Uint8Array[] = [];
 
-  for (const range of ranges) {
+  if (mode === "single-file") {
+    const doc = await PDFDocument.create();
+    const pageIndexes = normalizedRanges.flatMap((range) =>
+      source.getPageIndices().filter((index) => index >= range.start && index <= range.end)
+    );
+    const pages = await doc.copyPages(source, pageIndexes);
+    pages.forEach((page) => doc.addPage(page));
+    outputs.push(await doc.save());
+    return outputs;
+  }
+
+  for (const range of normalizedRanges) {
     const doc = await PDFDocument.create();
     const pages = await doc.copyPages(
       source,
@@ -95,4 +129,25 @@ export async function redactPdf(
   const data = await file.arrayBuffer();
   const rendered = await renderPdfPages(data, dpi, redactions);
   return rebuildFromImages(rendered);
+}
+
+function normalizeRanges(ranges: PageRange[], pageCount: number) {
+  if (!ranges.length) {
+    throw new Error("At least one range is required.");
+  }
+
+  const output: PageRange[] = [];
+  for (const range of ranges) {
+    const start = Math.max(0, range.start);
+    const end = Math.min(pageCount - 1, range.end);
+    if (start > end || start >= pageCount) {
+      continue;
+    }
+    output.push({ start, end });
+  }
+
+  if (!output.length) {
+    throw new Error("The selected ranges are outside the available pages.");
+  }
+  return output;
 }

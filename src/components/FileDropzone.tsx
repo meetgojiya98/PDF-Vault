@@ -30,7 +30,9 @@ export function FileDropzone({ multiple = false, onFiles }: Props) {
   };
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files ? Array.from(event.target.files) : [];
+    const files = event.target.files
+      ? Array.from(event.target.files).filter((file) => file.type === "application/pdf")
+      : [];
     if (files.length) {
       onFiles(files);
     }
