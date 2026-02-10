@@ -156,25 +156,49 @@ export async function stampSignature(
   return pdf.save();
 }
 
-async function rebuildFromImages(pages: { image: ArrayBuffer; width: number; height: number }[]) {
+async function rebuildFromImages(
+  pages: { image: ArrayBuffer; width: number; height: number }[],
+  imageFormat: "png" | "jpeg" = "png"
+) {
   const doc = await PDFDocument.create();
   for (const page of pages) {
-    const png = await doc.embedPng(page.image);
+    const image =
+      imageFormat === "jpeg" ? await doc.embedJpg(page.image) : await doc.embedPng(page.image);
     const pdfPage = doc.addPage([page.width, page.height]);
-    pdfPage.drawImage(png, {
+    pdfPage.drawImage(image, {
       x: 0,
       y: 0,
       width: page.width,
       height: page.height
     });
   }
-  return doc.save();
+  return doc.save({ useObjectStreams: true, addDefaultPage: false });
 }
 
 export async function compressPdf(file: File, dpi: number) {
-  const data = await file.arrayBuffer();
-  const rendered = await renderPdfPages(data, dpi);
-  return rebuildFromImages(rendered);
+  const input = new Uint8Array(await file.arrayBuffer());
+  const candidates: Uint8Array[] = [input];
+
+  try {
+    const optimized = await optimizePdfStructure(input);
+    candidates.push(optimized);
+  } catch (error) {
+    console.warn("Structure optimization skipped:", error);
+  }
+
+  try {
+    const jpegQuality = getJpegQualityForDpi(dpi);
+    const rendered = await renderPdfPages(input.buffer.slice(0), dpi, undefined, {
+      imageFormat: "jpeg",
+      imageQuality: jpegQuality
+    });
+    const rasterized = await rebuildFromImages(rendered, "jpeg");
+    candidates.push(rasterized);
+  } catch (error) {
+    console.warn("Raster compression skipped:", error);
+  }
+
+  return smallestBySize(candidates);
 }
 
 export async function redactPdf(
@@ -183,7 +207,7 @@ export async function redactPdf(
   dpi: number
 ) {
   const data = await file.arrayBuffer();
-  const rendered = await renderPdfPages(data, dpi, redactions);
+  const rendered = await renderPdfPages(data, dpi, redactions, { imageFormat: "png" });
   return rebuildFromImages(rendered);
 }
 
@@ -217,4 +241,19 @@ export function resolvePageIndexes(source: PDFDocument, ranges?: PageRange[]) {
     .flatMap((range) => source.getPageIndices().filter((index) => index >= range.start && index <= range.end))
     .filter((value, index, all) => all.indexOf(value) === index)
     .sort((a, b) => a - b);
+}
+
+function smallestBySize(candidates: Uint8Array[]) {
+  return candidates.reduce((best, next) => (next.length < best.length ? next : best));
+}
+
+async function optimizePdfStructure(data: Uint8Array) {
+  const pdf = await PDFDocument.load(data);
+  return pdf.save({ useObjectStreams: true, addDefaultPage: false });
+}
+
+function getJpegQualityForDpi(dpi: number) {
+  const clamped = Math.min(220, Math.max(96, dpi));
+  const ratio = (clamped - 96) / (220 - 96);
+  return 0.45 + ratio * 0.35;
 }

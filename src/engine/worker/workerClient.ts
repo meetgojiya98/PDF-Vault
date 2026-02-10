@@ -1,4 +1,4 @@
-import type { RenderRequest, RenderResponse } from "./pdfWorker";
+import type { RenderImageFormat, RenderRequest, RenderResponse } from "./pdfWorker";
 
 let worker: Worker | null = null;
 type RenderedPages = Extract<RenderResponse, { type: "rendered" }>["pages"];
@@ -19,28 +19,43 @@ function resetWorker() {
 export async function renderPdfPages(
   data: ArrayBuffer,
   dpi: number,
-  redactions?: Record<number, { x: number; y: number; width: number; height: number }[]>
+  redactions?: Record<number, { x: number; y: number; width: number; height: number }[]>,
+  options?: {
+    imageFormat?: RenderImageFormat;
+    imageQuality?: number;
+  }
 ): Promise<RenderedPages> {
   const canUseWorker = typeof Worker !== "undefined" && typeof OffscreenCanvas !== "undefined";
   if (canUseWorker) {
     try {
-      return await renderInWorker(data.slice(0), dpi, redactions);
+      return await renderInWorker(data.slice(0), dpi, redactions, options);
     } catch (error) {
       console.warn("Worker rendering failed, falling back to main thread:", error);
       resetWorker();
     }
   }
 
-  return renderInMainThread(data, dpi, redactions);
+  return renderInMainThread(data, dpi, redactions, options);
 }
 
 async function renderInWorker(
   data: ArrayBuffer,
   dpi: number,
-  redactions?: Record<number, { x: number; y: number; width: number; height: number }[]>
+  redactions?: Record<number, { x: number; y: number; width: number; height: number }[]>,
+  options?: {
+    imageFormat?: RenderImageFormat;
+    imageQuality?: number;
+  }
 ) {
   const instance = getWorker();
-  const request: RenderRequest = { type: "render", data, dpi, redactions };
+  const request: RenderRequest = {
+    type: "render",
+    data,
+    dpi,
+    redactions,
+    imageFormat: options?.imageFormat,
+    imageQuality: options?.imageQuality
+  };
 
   return new Promise<RenderedPages>((resolve, reject) => {
     const timeout = window.setTimeout(() => {
@@ -80,11 +95,17 @@ async function renderInWorker(
 async function renderInMainThread(
   data: ArrayBuffer,
   dpi: number,
-  redactions?: Record<number, { x: number; y: number; width: number; height: number }[]>
+  redactions?: Record<number, { x: number; y: number; width: number; height: number }[]>,
+  options?: {
+    imageFormat?: RenderImageFormat;
+    imageQuality?: number;
+  }
 ) {
   const { getDocument } = await import("pdfjs-dist");
   const doc = await getDocument({ data, disableWorker: true } as any).promise;
   const pages: RenderedPages = [];
+  const imageFormat = options?.imageFormat ?? "png";
+  const imageQuality = options?.imageQuality ?? 0.72;
 
   for (let i = 1; i <= doc.numPages; i += 1) {
     const page = await doc.getPage(i);
@@ -110,9 +131,13 @@ async function renderInMainThread(
       });
     }
 
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob((result) => resolve(result), "image/png")
-    );
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(
+        (result) => resolve(result),
+        imageFormat === "jpeg" ? "image/jpeg" : "image/png",
+        imageFormat === "jpeg" ? imageQuality : undefined
+      );
+    });
     if (!blob) continue;
     const buffer = await blob.arrayBuffer();
     pages.push({ index: i - 1, width: viewport.width, height: viewport.height, image: buffer });
